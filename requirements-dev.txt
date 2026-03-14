@@ -1,0 +1,5 @@
+# Solo para desarrollo y tests — no se instalan en producción
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+pytest-httpx==0.35.0    # mockear llamadas httpx en tests

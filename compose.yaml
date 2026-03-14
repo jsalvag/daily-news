@@ -1,0 +1,63 @@
+# compose.yaml — daily-news
+#
+# PRIMER USO:
+#   cp .env.example .env         # editar con ANTHROPIC_API_KEY real
+#   docker compose build         # construye app + test (una sola vez)
+#   docker compose run --rm test # verifica que todo funciona
+#   docker compose up app        # levanta la API en localhost:8000
+#
+# Ver Makefile para shortcuts: make build | make test | make up | make logs
+
+name: daily-news
+
+services:
+
+  # ── Aplicación ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      target: production
+    image: daily-news:latest
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    volumes:
+      - db_data:/app/data           # SQLite persistente entre reinicios
+      - ./config:/app/config:ro     # sources.yaml editable sin rebuild
+    env_file:
+      - path: .env
+        required: true              # requiere ANTHROPIC_API_KEY real
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$${PORT:-8000}/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  # Los volúmenes montan el código fuente del host sobre la imagen:
+  # los cambios locales se reflejan SIN necesidad de reconstruir.
+  # Solo rebuild si cambian requirements*.txt o el Dockerfile.
+  #
+  # Uso directo:
+  #   docker compose run --rm test                               → suite completa
+  #   docker compose run --rm test pytest tests/test_feed.py -v → un módulo
+  #   docker compose run --rm --entrypoint bash test             → shell
+  test:
+    build:
+      context: .
+      target: test
+    image: daily-news-test:latest
+    volumes:
+      - ./app:/app/app              # código de la app
+      - ./tests:/app/tests          # archivos de test
+      - ./config:/app/config:ro     # yaml de fuentes (referenciado en tests)
+    environment:
+      # Valor dummy — los unit tests mockean el cliente Anthropic
+      ANTHROPIC_API_KEY: "test-dummy-key-not-used-in-unit-tests"
+    profiles:
+      - test                        # no arranca con 'docker compose up'
+
+volumes:
+  db_data:
+    driver: local

@@ -1,0 +1,31 @@
+# API & Server
+fastapi==0.115.13
+uvicorn[standard]==0.32.1
+
+# MCP — expone FastAPI como herramientas MCP automáticamente
+fastapi-mcp==0.3.3
+mcp==1.12.4
+
+# News fetching
+feedparser==6.0.11
+httpx==0.28.1
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Scheduling
+apscheduler==3.10.4
+
+# Storage
+sqlalchemy==2.0.36
+
+# RSS generation
+feedgen==1.0.0
+
+# Claude API
+anthropic==0.40.0
+
+# Utils
+python-dotenv==1.0.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+pyyaml==6.0.2

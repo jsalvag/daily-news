@@ -1,0 +1,66 @@
+# Fuentes de noticias por categoría
+# Podés agregar/quitar URLs en cualquier momento y reiniciar el servicio
+
+categories:
+
+  argentina:
+    label: "Argentina"
+    language: es
+    sources:
+      - name: "Infobae"
+        url: "https://www.infobae.com/feeds/rss/"
+        type: rss
+      - name: "La Nación"
+        url: "https://www.lanacion.com.ar/arc/outboundfeeds/rss/"
+        type: rss
+      - name: "Clarín"
+        url: "https://www.clarin.com/rss/lo-ultimo/"
+        type: rss
+      - name: "Ámbito Financiero"
+        url: "https://www.ambito.com/rss.xml"
+        type: rss
+
+  venezuela:
+    label: "Venezuela - Política y Economía"
+    language: es
+    sources:
+      - name: "El Nacional"
+        url: "https://www.elnacional.com/feed/"
+        type: rss
+      - name: "Efecto Cocuyo"
+        url: "https://efectococuyo.com/feed/"
+        type: rss
+      - name: "El Pitazo"
+        url: "https://elpitazo.net/feed/"
+        type: rss
+
+  tecnologia:
+    label: "Tecnología"
+    language: en
+    sources:
+      - name: "TechCrunch"
+        url: "https://techcrunch.com/feed/"
+        type: rss
+      - name: "The Verge"
+        url: "https://www.theverge.com/rss/index.xml"
+        type: rss
+      - name: "Ars Technica"
+        url: "https://feeds.arstechnica.com/arstechnica/index"
+        type: rss
+      - name: "Hacker News"
+        url: "https://hnrss.org/frontpage"
+        type: rss
+
+  mercados:
+    label: "Mercados y Finanzas"
+    language: en
+    sources:
+      - name: "Reuters Business"
+        url: "https://feeds.reuters.com/reuters/businessNews"
+        type: rss
+      - name: "MarketWatch"
+        url: "https://feeds.marketwatch.com/marketwatch/topstories/"
+        type: rss
+      - name: "Investing.com"
+        url: "https://www.investing.com/rss/news.rss"
+        type: rss

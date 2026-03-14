@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Entorno
+.env
+
+# Base de datos
+data/
+*.db
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
