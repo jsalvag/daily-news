@@ -247,30 +247,45 @@ class TestMakeFetchJob:
 
 class TestMakeProcessJob:
     def test_job_llama_a_process_pending(self, session_factory):
-        mock_client = MagicMock()
+        mock_cfg = MagicMock()
+        mock_cfg.litellm_model = "groq/llama3-70b-8192"
+        mock_cfg.api_key = "gsk_test"
+        mock_cfg.base_url = None
 
-        with patch("app.scheduler.jobs.process_pending_articles") as mock_process:
-            from app.processor.claude import ProcessResult
+        with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg):
+            from app.processor.llm import ProcessResult
             mock_process.return_value = ProcessResult(processed=3)
 
-            job = make_process_job(session_factory, mock_client)
+            job = make_process_job(session_factory)
             job()
 
         mock_process.assert_called_once()
 
-    def test_job_hace_commit(self, session, session_factory):
-        mock_client = MagicMock()
+    def test_job_no_procesa_si_no_hay_worker_configurado(self, session_factory):
+        with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
+             patch("app.scheduler.jobs.get_model_config", return_value=None):
+            job = make_process_job(session_factory)
+            job()
 
-        with patch("app.scheduler.jobs.process_pending_articles") as mock_process:
-            from app.processor.claude import ProcessResult
+        mock_process.assert_not_called()
+
+    def test_job_hace_commit(self, session, session_factory):
+        mock_cfg = MagicMock()
+        mock_cfg.litellm_model = "groq/llama3-70b-8192"
+        mock_cfg.api_key = None
+        mock_cfg.base_url = None
+
+        with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg):
+            from app.processor.llm import ProcessResult
             mock_process.return_value = ProcessResult()
 
             # Usamos una sesión mock para verificar el commit
             mock_session = MagicMock()
             mock_session_factory = lambda: mock_session
-            mock_process.return_value = ProcessResult()
 
-            job = make_process_job(mock_session_factory, mock_client)
+            job = make_process_job(mock_session_factory)
             job()
 
         mock_session.commit.assert_called_once()
@@ -303,13 +318,11 @@ class TestMakeBriefingJob:
 
 class TestCreateScheduler:
     def test_crea_scheduler_con_tres_jobs(self):
-        mock_client = MagicMock()
         mock_factory = MagicMock()
 
         scheduler = create_scheduler(
             daily_fetch_time="03:00",
             session_factory=mock_factory,
-            anthropic_client=mock_client,
             sources_config_path="config/sources.yaml",
         )
 
@@ -319,11 +332,9 @@ class TestCreateScheduler:
         assert "daily_briefing" in job_ids
 
     def test_jobs_con_horario_correcto(self):
-        mock_client = MagicMock()
         scheduler = create_scheduler(
             daily_fetch_time="03:00",
             session_factory=MagicMock(),
-            anthropic_client=mock_client,
             sources_config_path="config/sources.yaml",
         )
 
@@ -347,7 +358,6 @@ class TestCreateScheduler:
         scheduler = create_scheduler(
             daily_fetch_time="23:00",
             session_factory=MagicMock(),
-            anthropic_client=MagicMock(),
             sources_config_path="config/sources.yaml",
         )
         jobs = {job.id: job for job in scheduler.get_jobs()}
@@ -368,6 +378,5 @@ class TestCreateScheduler:
             create_scheduler(
                 daily_fetch_time="invalid",
                 session_factory=MagicMock(),
-                anthropic_client=MagicMock(),
                 sources_config_path="config/sources.yaml",
             )

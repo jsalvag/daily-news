@@ -1,12 +1,14 @@
 """Configuración central de la aplicación."""
 
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
 class Settings(BaseSettings):
-    # Claude API
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    # Claude / LLM API (opcional — los modelos se configuran desde la UI)
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
 
     # Servidor
     host: str = Field(default="0.0.0.0", env="HOST")
@@ -17,7 +19,7 @@ class Settings(BaseSettings):
         default="sqlite:///./data/news.db", env="DATABASE_URL"
     )
 
-    # Scheduler
+    # Scheduler (puede sobreescribirse desde la BD en startup)
     daily_fetch_time: str = Field(default="06:00", env="DAILY_FETCH_TIME")
 
     # RSS feed

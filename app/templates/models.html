@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Modelos IA{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-900 mb-2">Modelos de IA</h1>
+<p class="text-sm text-gray-500 mb-8">
+  Configura qué LLM usa cada rol. El formato del proveedor sigue la convención de
+  <a href="https://docs.litellm.ai/docs/providers" target="_blank" class="text-blue-600 underline">LiteLLM</a>
+  (<code class="bg-gray-100 px-1 rounded">proveedor/modelo</code>).
+</p>
+
+<!-- Tabla de proveedores de referencia rápida -->
+<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8 text-sm">
+  <div class="font-semibold text-blue-700 mb-2">📋 Ejemplos de modelos gratuitos</div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-blue-900">
+    <div><strong>Groq (gratis, rápido):</strong> proveedor=<code>groq</code>, modelo=<code>llama3-70b-8192</code></div>
+    <div><strong>Groq Gemma:</strong> proveedor=<code>groq</code>, modelo=<code>gemma2-9b-it</code></div>
+    <div><strong>Ollama (local):</strong> proveedor=<code>ollama</code>, modelo=<code>llama3</code>, URL=<code>http://localhost:11434</code></div>
+    <div><strong>Anthropic:</strong> proveedor=<code>anthropic</code>, modelo=<code>claude-haiku-4-5</code></div>
+  </div>
+</div>
+
+{% for role, label, description in [
+  ('worker', 'Worker — Análisis de artículos',
+   'Analiza cada artículo individualmente: genera titular, resumen y puntuación de relevancia. Se ejecuta en el ciclo diario automático y con "Procesar IA".'),
+  ('editor', 'Editor — Síntesis del briefing',
+   'Opcional. Sintetiza todos los titulares del día en un briefing narrativo. Si no está configurado, el briefing usa los titulares directamente.')
+] %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <div class="flex items-center justify-between mb-1">
+    <h2 class="text-base font-semibold text-gray-900">{{ label }}</h2>
+    {% if configs.get(role) %}
+    <form action="/web/models/{{ role }}/delete" method="post"
+          onsubmit="return confirm('¿Eliminar configuración del modelo {{ role }}?')">
+      <button class="text-xs text-red-500 hover:text-red-700">Eliminar</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="text-xs text-gray-500 mb-4">{{ description }}</p>
+
+  {% set cfg = configs.get(role) %}
+  <form action="/web/models/{{ role }}" method="post" class="space-y-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">Proveedor <span class="text-red-500">*</span></label>
+        <input type="text" name="provider" required
+               value="{{ cfg.provider if cfg else '' }}"
+               placeholder="groq"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">ID del modelo <span class="text-red-500">*</span></label>
+        <input type="text" name="model_id" required
+               value="{{ cfg.model_id if cfg else '' }}"
+               placeholder="llama3-70b-8192"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">API Key</label>
+        <input type="password" name="api_key"
+               value="{{ cfg.api_key if cfg and cfg.api_key else '' }}"
+               placeholder="gsk_... (vacío para Ollama)"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+        <p class="text-xs text-gray-400 mt-1">Vacío si el modelo no requiere autenticación (ej: Ollama).</p>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">URL base</label>
+        <input type="text" name="base_url"
+               value="{{ cfg.base_url if cfg and cfg.base_url else '' }}"
+               placeholder="http://localhost:11434 (solo para Ollama)"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+        <p class="text-xs text-gray-400 mt-1">Solo necesario para proveedores locales (Ollama, LMStudio).</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button type="submit"
+              class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+        {{ "Actualizar" if cfg else "Guardar" }}
+      </button>
+      {% if cfg %}
+      <span class="text-xs text-gray-400">
+        Modelo actual: <code class="bg-gray-100 px-1 rounded">{{ cfg.litellm_model }}</code>
+      </span>
+      {% endif %}
+    </div>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

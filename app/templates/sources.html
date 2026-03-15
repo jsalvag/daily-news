@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Fuentes RSS{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-900 mb-2">Fuentes RSS</h1>
+<p class="text-sm text-gray-500 mb-8">
+  Gestiona las fuentes de noticias. Las fuentes se sincronizan desde
+  <code class="bg-gray-100 px-1 rounded">sources.yaml</code> al arrancar la aplicación.
+</p>
+
+{% if sources %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="bg-gray-50 border-b border-gray-200 text-left">
+        <th class="px-4 py-3 font-medium text-gray-600">Fuente</th>
+        <th class="px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Categoría</th>
+        <th class="px-4 py-3 font-medium text-gray-600 hidden md:table-cell">URL del feed</th>
+        <th class="px-4 py-3 font-medium text-gray-600 text-center">Estado</th>
+        <th class="px-4 py-3 font-medium text-gray-600 text-right">Acciones</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for src in sources %}
+      <tr class="hover:bg-gray-50 transition-colors {% if not src.enabled %}opacity-50{% endif %}">
+        <td class="px-4 py-3">
+          <div class="font-medium text-gray-900">{{ src.name }}</div>
+        </td>
+        <td class="px-4 py-3 text-gray-500 hidden md:table-cell">
+          {% if src.category %}
+            <span class="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full">{{ src.category }}</span>
+          {% else %}
+            <span class="text-gray-400">—</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 hidden md:table-cell">
+          <a href="{{ src.feed_url }}" target="_blank"
+             class="text-gray-400 hover:text-blue-500 truncate block max-w-xs" title="{{ src.feed_url }}">
+            {{ src.feed_url | truncate(50) }}
+          </a>
+        </td>
+        <td class="px-4 py-3 text-center">
+          {% if src.enabled %}
+            <span class="inline-flex items-center gap-1 bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span> Activa
+            </span>
+          {% else %}
+            <span class="inline-flex items-center gap-1 bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span> Inactiva
+            </span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <div class="flex items-center justify-end gap-2">
+            <!-- Toggle -->
+            <form action="/web/sources/{{ src.id }}/toggle" method="post">
+              <button type="submit"
+                      class="text-xs px-2 py-1 rounded border transition
+                             {% if src.enabled %}border-yellow-300 text-yellow-700 hover:bg-yellow-50
+                             {% else %}border-green-300 text-green-700 hover:bg-green-50{% endif %}">
+                {{ "Desactivar" if src.enabled else "Activar" }}
+              </button>
+            </form>
+            <!-- Delete -->
+            <form action="/web/sources/{{ src.id }}/delete" method="post"
+                  onsubmit="return confirm('¿Eliminar la fuente «{{ src.name }}» y todos sus artículos?')">
+              <button type="submit"
+                      class="text-xs px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition">
+                Eliminar
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="text-xs text-gray-400 mt-3">
+  {{ sources | length }} fuente{{ 's' if sources | length != 1 else '' }} en total ·
+  {{ sources | selectattr('enabled') | list | length }} activa{{ 's' if sources | selectattr('enabled') | list | length != 1 else '' }}
+</p>
+
+{% else %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
+  <div class="text-4xl mb-3">📭</div>
+  <h2 class="text-lg font-semibold text-gray-700 mb-1">No hay fuentes configuradas</h2>
+  <p class="text-sm text-gray-500">
+    Crea un archivo <code class="bg-gray-100 px-1 rounded">sources.yaml</code> en la raíz del proyecto
+    y reinicia la aplicación para sincronizar las fuentes.
+  </p>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -80,7 +80,6 @@ def api_client(db_engine):
     mock_settings.feed_base_url = "http://localhost:8000"
 
     app.state.session_factory = SessionLocal
-    app.state.anthropic_client = MagicMock()
     app.state.scheduler = MagicMock()
     app.state.settings = mock_settings
 
