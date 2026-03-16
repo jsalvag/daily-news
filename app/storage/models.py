@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     create_engine,
 )
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
@@ -74,10 +75,11 @@ class DailyBriefing(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     date = Column(String(10), nullable=False, unique=True)  # YYYY-MM-DD
-    headlines_text = Column(Text, nullable=True)   # versión corta (Google Home)
+    headlines_text = Column(Text, nullable=True)   # versión corta (Google Home / TTS)
     full_text = Column(Text, nullable=True)         # versión completa (iPhone)
     article_ids = Column(Text, nullable=True)       # IDs separados por coma
     generated_at = Column(DateTime, default=datetime.utcnow)
+    audio_filename = Column(String(200), nullable=True)  # nombre del MP3 generado por TTS
 
     def __repr__(self) -> str:
         return f"<DailyBriefing date={self.date!r}>"
@@ -130,8 +132,21 @@ def create_db_engine(database_url: str):
 
 
 def init_db(engine) -> None:
-    """Crea todas las tablas si no existen."""
+    """Crea todas las tablas si no existen y aplica migraciones incrementales."""
     Base.metadata.create_all(bind=engine)
+
+    # Migración: agregar columnas nuevas a tablas existentes si no están presentes.
+    # SQLite soporta ALTER TABLE ADD COLUMN para columnas nullable sin valor default.
+    _migrations = [
+        ("daily_briefings", "audio_filename", "VARCHAR(200)"),
+    ]
+    inspector = inspect(engine)
+    with engine.connect() as conn:
+        for table, column, col_type in _migrations:
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
 
 
 def get_session_factory(engine):

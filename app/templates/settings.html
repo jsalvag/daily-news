@@ -4,15 +4,14 @@
 {% block content %}
 <h1 class="text-2xl font-bold text-gray-900 mb-2">Ajustes</h1>
 <p class="text-sm text-gray-500 mb-8">
-  Configuración general de la aplicación. Los cambios de hora del scheduler se aplican
-  inmediatamente sin necesidad de reiniciar.
+  Configuración general de la aplicación. Los cambios se aplican inmediatamente sin reiniciar.
 </p>
 
-<!-- Scheduler -->
+<!-- ── Scheduler ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
   <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclo diario automático</h2>
   <p class="text-xs text-gray-500 mb-4">
-    Hora UTC a la que se ejecuta el ciclo fetch → proceso IA → briefing.
+    Hora UTC a la que se ejecuta el ciclo fetch → proceso IA → briefing + audio.
     El proceso IA se lanza 1 h después y el briefing 2 h después.
   </p>
 
@@ -59,12 +58,165 @@
     <div class="flex flex-col items-center">
       <div class="w-3 h-3 bg-green-500 rounded-full mb-1"></div>
       <span class="font-semibold text-green-600">{{ "%02d:%02d" | format(brief_h, brief_m) }}</span>
-      <span class="text-gray-400 mt-0.5">Briefing</span>
+      <span class="text-gray-400 mt-0.5">Briefing + 🔊 Audio</span>
     </div>
   </div>
 </div>
 
-<!-- Feed info (read-only) -->
+<!-- ── Text-to-Speech ── -->
+<div id="tts" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <div class="flex items-start justify-between mb-1">
+    <h2 class="text-base font-semibold text-gray-900">🔊 Text-to-Speech</h2>
+    {% if tts.tts_provider == 'openai' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">OpenAI TTS activo</span>
+    {% elif tts.tts_provider == 'elevenlabs' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">ElevenLabs activo</span>
+    {% else %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Deshabilitado</span>
+    {% endif %}
+  </div>
+  <p class="text-xs text-gray-500 mb-5">
+    Genera automáticamente un archivo MP3 al final de cada briefing diario.
+    El audio aparece como reproductor en el dashboard y queda disponible en
+    <code class="bg-gray-100 px-1 rounded">/audio/briefing-YYYY-MM-DD.mp3</code>.
+  </p>
+
+  <form action="/web/settings/tts" method="post" id="tts-form" class="space-y-5">
+
+    <!-- Selector de proveedor -->
+    <div>
+      <label class="block text-xs font-medium text-gray-700 mb-2">Proveedor</label>
+      <div class="flex gap-4 flex-wrap">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="provider" value="disabled"
+                 {% if tts.tts_provider == 'disabled' %}checked{% endif %}
+                 onchange="showTTSSection(this.value)"
+                 class="accent-gray-500">
+          <span class="text-sm text-gray-700">Deshabilitado</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="provider" value="openai"
+                 {% if tts.tts_provider == 'openai' %}checked{% endif %}
+                 onchange="showTTSSection(this.value)"
+                 class="accent-green-600">
+          <span class="text-sm font-medium text-gray-800">OpenAI TTS</span>
+          <span class="text-xs bg-green-50 text-green-600 border border-green-200 rounded px-1.5 py-0.5">~$0.03/mes</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="provider" value="elevenlabs"
+                 {% if tts.tts_provider == 'elevenlabs' %}checked{% endif %}
+                 onchange="showTTSSection(this.value)"
+                 class="accent-purple-600">
+          <span class="text-sm font-medium text-gray-800">ElevenLabs</span>
+          <span class="text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded px-1.5 py-0.5">gratis 10K chars/mes</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Sección OpenAI -->
+    <div id="section-openai"
+         class="border border-green-200 bg-green-50 rounded-lg p-4 space-y-4 {% if tts.tts_provider != 'openai' %}hidden{% endif %}">
+      <p class="text-xs text-green-700 font-semibold uppercase tracking-wide">Configuración OpenAI TTS</p>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">
+          API Key <span class="text-red-500">*</span>
+        </label>
+        <input type="password" name="openai_api_key"
+               value="{{ tts.tts_openai_api_key }}"
+               placeholder="sk-..."
+               autocomplete="new-password"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-green-500" />
+        <p class="text-xs text-gray-400 mt-1">
+          Podés usar la misma key de OpenAI que ya tenés configurada para el LLM.
+          <a href="https://platform.openai.com/api-keys" target="_blank" class="text-green-600 hover:underline ml-1">Obtener →</a>
+        </p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Voz</label>
+          <select name="openai_voice"
+                  class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+            {% for v, desc in [
+              ('nova',    'Nova — femenina, cálida ★'),
+              ('onyx',    'Onyx — masculina, profunda ★'),
+              ('alloy',   'Alloy — neutra, clara'),
+              ('echo',    'Echo — masculina, suave'),
+              ('fable',   'Fable — narrativa, expresiva'),
+              ('shimmer', 'Shimmer — femenina, etérea'),
+            ] %}
+            <option value="{{ v }}" {% if tts.tts_openai_voice == v %}selected{% endif %}>{{ desc }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-gray-400 mt-1">★ recomendadas para español</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Modelo</label>
+          <select name="openai_model"
+                  class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+            <option value="tts-1-hd" {% if tts.tts_openai_model == 'tts-1-hd' %}selected{% endif %}>
+              tts-1-hd — máxima calidad ★
+            </option>
+            <option value="tts-1" {% if tts.tts_openai_model == 'tts-1' %}selected{% endif %}>
+              tts-1 — rápido, menor costo
+            </option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sección ElevenLabs -->
+    <div id="section-elevenlabs"
+         class="border border-purple-200 bg-purple-50 rounded-lg p-4 space-y-4 {% if tts.tts_provider != 'elevenlabs' %}hidden{% endif %}">
+      <p class="text-xs text-purple-700 font-semibold uppercase tracking-wide">Configuración ElevenLabs</p>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">
+          API Key <span class="text-red-500">*</span>
+        </label>
+        <input type="password" name="elevenlabs_api_key"
+               value="{{ tts.tts_elevenlabs_api_key }}"
+               placeholder="sk_..."
+               autocomplete="new-password"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-500" />
+        <p class="text-xs text-gray-400 mt-1">
+          <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" class="text-purple-600 hover:underline">Obtener API key →</a>
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">
+          Voice ID <span class="text-red-500">*</span>
+        </label>
+        <input type="text" name="elevenlabs_voice_id"
+               value="{{ tts.tts_elevenlabs_voice_id }}"
+               placeholder="pNInz6obpgDQGcFmaJgB"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-500" />
+        <p class="text-xs text-gray-400 mt-1">
+          Encontralo en
+          <a href="https://elevenlabs.io/app/voice-library" target="_blank" class="text-purple-600 hover:underline">Voice Library</a>
+          → elegí una voz en español → copiá el ID.
+          El modelo <strong>eleven_multilingual_v2</strong> se usa automáticamente.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex gap-3 items-center">
+      <button type="submit"
+              class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+        Guardar TTS
+      </button>
+      <span class="text-xs text-gray-400" id="tts-hint">
+        El audio se genera automáticamente al crear el próximo briefing.
+      </span>
+    </div>
+
+  </form>
+</div>
+
+<!-- ── Feed RSS ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
   <h2 class="text-base font-semibold text-gray-900 mb-1">RSS feed</h2>
   <p class="text-xs text-gray-500 mb-4">
@@ -95,7 +247,7 @@
   </div>
 </div>
 
-<!-- API / MCP info -->
+<!-- ── API / MCP ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
   <h2 class="text-base font-semibold text-gray-900 mb-1">API &amp; MCP</h2>
   <p class="text-xs text-gray-500 mb-4">
@@ -112,4 +264,10 @@
   </div>
 </div>
 
+<script>
+function showTTSSection(provider) {
+  document.getElementById("section-openai").classList.toggle("hidden", provider !== "openai");
+  document.getElementById("section-elevenlabs").classList.toggle("hidden", provider !== "elevenlabs");
+}
+</script>
 {% endblock %}

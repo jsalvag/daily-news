@@ -344,6 +344,52 @@ def upsert_app_setting(session: Session, key: str, value: str) -> None:
         setting.updated_at = datetime.utcnow()
 
 
+# ─── TTS config ───────────────────────────────────────────────────────────────
+
+# Valores por defecto para cada clave TTS
+_TTS_DEFAULTS: dict[str, str] = {
+    "tts_provider":              "disabled",
+    "tts_openai_api_key":        "",
+    "tts_openai_voice":          "nova",
+    "tts_openai_model":          "tts-1-hd",
+    "tts_elevenlabs_api_key":    "",
+    "tts_elevenlabs_voice_id":   "",
+}
+
+
+def get_tts_config(session: Session) -> dict[str, str]:
+    """
+    Lee la configuración TTS completa desde app_settings.
+
+    Retorna un dict con todas las claves TTS, usando defaults para las ausentes.
+    """
+    return {
+        key: (get_app_setting(session, key) or default)
+        for key, default in _TTS_DEFAULTS.items()
+    }
+
+
+def save_tts_config(session: Session, config: dict[str, str]) -> None:
+    """
+    Persiste las claves TTS en app_settings.
+
+    Solo guarda las claves definidas en _TTS_DEFAULTS.
+    """
+    for key in _TTS_DEFAULTS:
+        value = config.get(key)
+        if value is not None:
+            upsert_app_setting(session, key, value)
+
+
+def update_briefing_audio(session: Session, briefing_id: int, audio_filename: str) -> None:
+    """Asocia un archivo de audio a un briefing existente."""
+    session.execute(
+        update(DailyBriefing)
+        .where(DailyBriefing.id == briefing_id)
+        .values(audio_filename=audio_filename)
+    )
+
+
 # ─── Article listing ──────────────────────────────────────────────────────────
 
 def get_recent_articles(

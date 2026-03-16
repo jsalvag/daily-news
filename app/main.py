@@ -7,8 +7,9 @@ Lifespan (startup / shutdown):
   3. Sincroniza sources.yaml → BD
   4. Lee daily_fetch_time desde BD (sobreescribe .env si existe)
   5. Crea y arranca el BackgroundScheduler (APScheduler)
-  6. Monta los endpoints MCP vía fastapi-mcp
-  7. Monta la Web UI vía Jinja2
+  6. Crea el directorio de audio TTS si no existe
+  7. Monta los endpoints MCP vía fastapi-mcp
+  8. Monta la Web UI vía Jinja2
 
 El scheduler se apaga limpiamente en el shutdown.
 """
@@ -18,8 +19,10 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.feed import feed_router
@@ -84,6 +87,7 @@ async def lifespan(app: FastAPI):
         daily_fetch_time=settings.daily_fetch_time,
         session_factory=session_factory,
         sources_config_path=settings.sources_config_path,
+        audio_dir=settings.audio_dir,
     )
     scheduler.start()
     app.state.scheduler = scheduler
@@ -95,6 +99,11 @@ async def lifespan(app: FastAPI):
         "process":  threading.Lock(),
         "briefing": threading.Lock(),
     }
+
+    # Directorio de audio TTS
+    audio_dir = Path(settings.audio_dir)
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Directorio de audio TTS: %s", audio_dir.resolve())
 
     logger.info("daily-news iniciado y listo.")
     yield
@@ -113,12 +122,25 @@ app = FastAPI(
         "API de briefings de noticias personalizados. "
         "Todos los endpoints están disponibles como herramientas MCP en /mcp."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(feed_router)   # /feed.xml (sin prefijo)
+
+
+# ─── Audio TTS ────────────────────────────────────────────────────────────────
+# Endpoint dedicado para servir archivos MP3 generados por TTS.
+# El directorio se crea en lifespan antes de que llegue el primer request.
+
+@app.get("/audio/{filename}", include_in_schema=False)
+def serve_audio(filename: str, request: Request):
+    """Sirve archivos de audio MP3 generados por TTS."""
+    audio_path = Path(request.app.state.settings.audio_dir) / filename
+    if not audio_path.exists() or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio no encontrado")
+    return FileResponse(audio_path, media_type="audio/mpeg")
 
 
 # ─── Web UI ───────────────────────────────────────────────────────────────────

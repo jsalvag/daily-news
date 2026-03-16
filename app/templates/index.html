@@ -187,12 +187,32 @@
 <!-- ── Briefing del día ── -->
 {% if briefing %}
 <div id="briefing-section" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-  <div class="flex items-center justify-between mb-4">
+  <div class="flex items-start justify-between mb-4 gap-4 flex-wrap">
     <div>
       <h2 class="text-lg font-semibold text-gray-900">Briefing del {{ briefing.date }}</h2>
       <p class="text-xs text-gray-400 mt-0.5">generado {{ briefing.generated_at.strftime('%H:%M') if briefing.generated_at else '' }} · resumen diario de noticias</p>
     </div>
+    {% if briefing.audio_filename %}
+    <span class="text-xs text-green-600 font-medium flex items-center gap-1">
+      <span>🔊</span> Audio disponible
+    </span>
+    {% endif %}
   </div>
+
+  {% if briefing.audio_filename %}
+  <div class="mb-5 bg-gray-50 border border-gray-200 rounded-lg p-3">
+    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">🔊 Escuchar briefing</div>
+    <audio controls class="w-full h-10" preload="none">
+      <source src="/audio/{{ briefing.audio_filename }}" type="audio/mpeg">
+      Tu navegador no soporta reproducción de audio.
+    </audio>
+    <div class="flex items-center justify-between mt-1.5">
+      <span class="text-xs text-gray-400">{{ briefing.audio_filename }}</span>
+      <a href="/audio/{{ briefing.audio_filename }}" download
+         class="text-xs text-blue-600 hover:underline">⬇ Descargar MP3</a>
+    </div>
+  </div>
+  {% endif %}
   <div class="mb-4">
     <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">🔊 Para TTS / Google Home</div>
     <p class="text-gray-700 text-sm leading-relaxed bg-gray-50 rounded-lg p-3 font-mono border border-gray-100">{{ briefing.headlines_text }}</p>

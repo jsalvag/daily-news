@@ -41,8 +41,10 @@ from app.storage.crud import (
     get_all_sources,
     get_articles_for_date,
     get_model_config,
+    get_tts_config,
     mark_source_fetched,
     save_articles,
+    update_briefing_audio,
     upsert_briefing,
 )
 from app.storage.models import DailyBriefing
@@ -254,9 +256,14 @@ def make_process_job(
 
 def make_briefing_job(
     session_factory: Callable[[], Session],
+    audio_dir: str = "data/audio",
 ) -> Callable[[], None]:
     """
     Retorna el job de generación del briefing diario.
+
+    Después de guardar el briefing, intenta generar el audio TTS si hay
+    un proveedor configurado en la BD. Si el TTS falla, el briefing queda
+    guardado igualmente — el audio es opcional.
     """
     def _job() -> None:
         logger.info("Job briefing: iniciando.")
@@ -264,10 +271,55 @@ def make_briefing_job(
         try:
             briefing = generate_daily_briefing(session, date.today())
             session.commit()
-            if briefing:
-                logger.info("Job briefing: briefing %s generado.", briefing.date)
-            else:
+            if not briefing:
                 logger.warning("Job briefing: no se generó ningún briefing.")
+                return
+
+            logger.info("Job briefing: briefing %s generado.", briefing.date)
+
+            # ── TTS: generar audio si hay proveedor configurado ───────────────
+            try:
+                tts_cfg = get_tts_config(session)
+                provider = tts_cfg.get("tts_provider", "disabled")
+
+                if provider in ("openai", "elevenlabs"):
+                    from pathlib import Path
+                    from app.tts.generate import generate_audio_for_briefing
+
+                    api_key = tts_cfg.get(f"tts_{provider}_api_key", "")
+                    if not api_key:
+                        logger.warning(
+                            "Job briefing: TTS %s configurado pero sin API key — omitiendo audio.",
+                            provider,
+                        )
+                    else:
+                        voice_key = "tts_openai_voice" if provider == "openai" else "tts_elevenlabs_voice_id"
+                        voice = tts_cfg.get(voice_key, "")
+
+                        kwargs: dict = {}
+                        if provider == "openai":
+                            kwargs["openai_model"] = tts_cfg.get("tts_openai_model", "tts-1-hd")
+
+                        filename = f"briefing-{briefing.date}.mp3"
+                        output_path = Path(audio_dir) / filename
+
+                        generate_audio_for_briefing(
+                            text=briefing.headlines_text or "",
+                            output_path=output_path,
+                            provider=provider,
+                            api_key=api_key,
+                            voice=voice,
+                            **kwargs,
+                        )
+                        update_briefing_audio(session, briefing.id, filename)
+                        session.commit()
+                        logger.info("Job briefing: audio TTS guardado → %s", filename)
+
+            except Exception as tts_exc:
+                logger.warning(
+                    "Job briefing: TTS falló (briefing guardado sin audio): %s", tts_exc
+                )
+
         except Exception as exc:
             logger.exception("Job briefing: error inesperado: %s", exc)
             session.rollback()
@@ -294,6 +346,7 @@ def create_scheduler(
     daily_fetch_time: str,
     session_factory: Callable[[], Session],
     sources_config_path: str,
+    audio_dir: str = "data/audio",
 ) -> BackgroundScheduler:
     """
     Crea y configura el BackgroundScheduler con los tres jobs diarios.
@@ -337,7 +390,7 @@ def create_scheduler(
         replace_existing=True,
     )
     scheduler.add_job(
-        make_briefing_job(session_factory),
+        make_briefing_job(session_factory, audio_dir=audio_dir),
         trigger=CronTrigger(hour=briefing_hour, minute=briefing_minute),
         id="daily_briefing",
         name="Generación del briefing diario",

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         default="config/sources.yaml", env="SOURCES_CONFIG_PATH"
     )
 
+    # Directorio para archivos de audio TTS generados
+    # En Docker comparte el mismo volumen que la BD (data/)
+    audio_dir: str = Field(default="data/audio", env="AUDIO_DIR")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

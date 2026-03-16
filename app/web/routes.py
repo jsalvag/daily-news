@@ -26,6 +26,8 @@ from app.storage.crud import (
     get_model_config,
     get_recent_articles,
     get_recent_briefings,
+    get_tts_config,
+    save_tts_config,
     toggle_source,
     upsert_app_setting,
     upsert_model_config,
@@ -215,8 +217,9 @@ def web_delete_model(role: str, db: Session = Depends(get_db)):
 
 @web_router.get("/settings", response_class=HTMLResponse)
 def web_settings(request: Request, db: Session = Depends(get_db)):
-    """Ajustes de la aplicación (hora del scheduler, etc.)."""
+    """Ajustes de la aplicación (scheduler, TTS, feed, etc.)."""
     s = request.app.state.settings
+    tts = get_tts_config(db)
     return templates.TemplateResponse(
         "settings.html",
         {
@@ -225,8 +228,32 @@ def web_settings(request: Request, db: Session = Depends(get_db)):
             "feed_title": s.feed_title,
             "feed_description": s.feed_description,
             "feed_base_url": s.feed_base_url,
+            "tts": tts,
         },
     )
+
+
+@web_router.post("/settings/tts")
+def web_update_tts(
+    db: Session = Depends(get_db),
+    provider: str = Form(default="disabled"),
+    openai_api_key: str = Form(default=""),
+    openai_voice: str = Form(default="nova"),
+    openai_model: str = Form(default="tts-1-hd"),
+    elevenlabs_api_key: str = Form(default=""),
+    elevenlabs_voice_id: str = Form(default=""),
+):
+    """Guarda la configuración TTS desde el formulario."""
+    save_tts_config(db, {
+        "tts_provider":            provider.strip(),
+        "tts_openai_api_key":      openai_api_key.strip(),
+        "tts_openai_voice":        openai_voice.strip(),
+        "tts_openai_model":        openai_model.strip(),
+        "tts_elevenlabs_api_key":  elevenlabs_api_key.strip(),
+        "tts_elevenlabs_voice_id": elevenlabs_voice_id.strip(),
+    })
+    db.commit()
+    return RedirectResponse("/web/settings#tts", status_code=303)
 
 
 @web_router.post("/settings/scheduler")
