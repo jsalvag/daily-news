@@ -220,6 +220,29 @@ def get_briefing_for_date(date_str: str, db: Session = Depends(get_db)):
 
 # ─── Jobs ─────────────────────────────────────────────────────────────────────
 
+def _locked_job(name: str, job_fn, request: Request, background_tasks: BackgroundTasks):
+    """
+    Envuelve un job con un lock de exclusión mutua.
+
+    Si el job ya está corriendo retorna 409 Conflict.
+    Libera el lock automáticamente al terminar (éxito o error).
+    """
+    lock = request.app.state.job_locks[name]
+    if not lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail=f"El job '{name}' ya está en ejecución. Esperá a que termine.",
+        )
+
+    def _run():
+        try:
+            job_fn()
+        finally:
+            lock.release()
+
+    background_tasks.add_task(_run)
+
+
 @router.post(
     "/jobs/fetch",
     response_model=JobStatusResponse,
@@ -230,14 +253,13 @@ def trigger_fetch(request: Request, background_tasks: BackgroundTasks):
     """
     Dispara manualmente el fetch de todos los feeds RSS.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay un fetch en curso.
     """
     session_factory = request.app.state.session_factory
     sources_config_path = request.app.state.settings.sources_config_path
     job = make_fetch_job(session_factory, sources_config_path)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Fetch iniciado en background."
-    )
+    _locked_job("fetch", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Fetch iniciado en background.")
 
 
 @router.post(
@@ -250,13 +272,12 @@ def trigger_process(request: Request, background_tasks: BackgroundTasks):
     """
     Dispara manualmente el procesamiento IA de artículos pendientes.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay un proceso en curso.
     """
     session_factory = request.app.state.session_factory
     job = make_process_job(session_factory)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Procesamiento IA iniciado en background."
-    )
+    _locked_job("process", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Procesamiento IA iniciado en background.")
 
 
 @router.post(
@@ -269,13 +290,12 @@ def trigger_briefing(request: Request, background_tasks: BackgroundTasks):
     """
     Genera (o regenera) el briefing del día actual.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay una generación en curso.
     """
     session_factory = request.app.state.session_factory
     job = make_briefing_job(session_factory)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Generación de briefing iniciada en background."
-    )
+    _locked_job("briefing", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Generación de briefing iniciada en background.")
 
 
 # ─── Settings ─────────────────────────────────────────────────────────────────

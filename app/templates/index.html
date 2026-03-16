@@ -2,105 +2,396 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
-  <div class="flex gap-2">
-    <form action="/api/v1/jobs/fetch" method="post"
-          onsubmit="this.querySelector('button').disabled=true">
-      <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-        ▶ Fetch ahora
-      </button>
-    </form>
-    <form action="/api/v1/jobs/process" method="post"
-          onsubmit="this.querySelector('button').disabled=true">
-      <button class="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition"
-              {% if not worker_configured %}disabled title="Configura un modelo worker primero"{% endif %}>
-        ⚙ Procesar IA
-      </button>
-    </form>
-    <form action="/api/v1/jobs/briefing" method="post"
-          onsubmit="this.querySelector('button').disabled=true">
-      <button class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition">
-        📋 Generar briefing
-      </button>
-    </form>
+
+<!-- ── Header + botones de acción ── -->
+<div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Estado del pipeline de noticias</p>
+  </div>
+  <div id="job-buttons" class="flex gap-2 flex-wrap">
+    <button id="btn-fetch"
+            onclick="triggerJob('fetch', this)"
+            class="job-btn px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm"
+            title="Descarga artículos nuevos desde todas las fuentes RSS activas">
+      <span class="btn-icon">▶</span>
+      <span class="btn-label">Fetch ahora</span>
+    </button>
+    <button id="btn-process"
+            onclick="triggerJob('process', this)"
+            {% if not worker_configured %}disabled title="Configura un modelo worker primero en Modelos IA"{% else %}title="Analiza con IA los artículos que todavía no fueron procesados"{% endif %}
+            class="job-btn px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm">
+      <span class="btn-icon">⚙</span>
+      <span class="btn-label">Procesar IA</span>
+    </button>
+    <button id="btn-briefing"
+            onclick="triggerJob('briefing', this)"
+            title="Genera el resumen del día a partir de los artículos procesados"
+            class="job-btn px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm">
+      <span class="btn-icon">📋</span>
+      <span class="btn-label">Generar briefing</span>
+    </button>
   </div>
 </div>
 
 {% if not worker_configured %}
-<div class="mb-6 p-4 bg-yellow-50 border border-yellow-300 rounded-lg text-sm text-yellow-800">
-  ⚠ <strong>Sin modelo configurado.</strong>
-  El procesamiento IA está deshabilitado hasta que configures un modelo en
-  <a href="/web/models" class="underline font-medium">Modelos IA</a>.
-</div>
-{% endif %}
-
-<!-- Stats rápidas -->
-<div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <div class="text-2xl font-bold text-blue-600">{{ sources_count }}</div>
-    <div class="text-xs text-gray-500 mt-1">Fuentes configuradas</div>
-  </div>
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <div class="text-2xl font-bold text-purple-600">{{ recent_briefings | length }}</div>
-    <div class="text-xs text-gray-500 mt-1">Briefings generados</div>
-  </div>
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <div class="text-2xl font-bold {% if worker_configured %}text-green-600{% else %}text-red-400{% endif %}">
-      {{ "✓" if worker_configured else "✗" }}
-    </div>
-    <div class="text-xs text-gray-500 mt-1">Modelo worker</div>
-  </div>
-</div>
-
-<!-- Briefing más reciente -->
-{% if briefing %}
-<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-  <div class="flex items-center justify-between mb-4">
-    <h2 class="text-lg font-semibold text-gray-900">
-      Briefing del {{ briefing.date }}
-    </h2>
-    <span class="text-xs text-gray-400">generado {{ briefing.generated_at.strftime('%H:%M') if briefing.generated_at else '' }}</span>
-  </div>
-
-  <!-- Voz (Google Home) -->
-  <div class="mb-4">
-    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-      🔊 Google Home / TTS
-    </div>
-    <p class="text-gray-700 text-sm leading-relaxed bg-gray-50 rounded p-3 font-mono">
-      {{ briefing.headlines_text }}
-    </p>
-  </div>
-
-  <!-- Completo -->
+<div class="mb-5 p-4 bg-yellow-50 border border-yellow-300 rounded-lg text-sm text-yellow-800 flex items-start gap-2">
+  <span class="text-lg leading-none mt-0.5">⚠</span>
   <div>
-    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-      📱 Lectura completa
-    </div>
-    <pre class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed bg-gray-50 rounded p-3">{{ briefing.full_text }}</pre>
+    <strong>Sin modelo de IA configurado.</strong>
+    El paso "Procesar IA" está deshabilitado.
+    <a href="/web/models" class="underline font-medium ml-1">Configurar ahora →</a>
   </div>
-</div>
-{% else %}
-<div class="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
-  <div class="text-4xl mb-3">📭</div>
-  <div class="text-sm">No hay briefings generados todavía.</div>
-  <div class="text-xs mt-1">Haz fetch de artículos, procésalos y genera el briefing.</div>
 </div>
 {% endif %}
 
-<!-- Briefings recientes -->
+<!-- ── Log de jobs ── -->
+<div id="job-panel" class="hidden mb-6 bg-gray-950 text-gray-100 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
+  <div class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
+    <div class="flex items-center gap-2">
+      <span id="job-panel-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
+      <span class="text-xs font-semibold text-gray-300 uppercase tracking-wide">Log del pipeline</span>
+    </div>
+    <button onclick="clearLog()" class="text-xs text-gray-500 hover:text-gray-300 transition">✕ Limpiar</button>
+  </div>
+  <div id="job-log" class="px-4 py-3 text-xs font-mono space-y-1 max-h-52 overflow-y-auto"></div>
+</div>
+
+<!-- ── Flujo del pipeline ── -->
+<div class="bg-white rounded-xl border border-gray-200 p-5 mb-6 shadow-sm">
+  <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Pipeline de noticias</h2>
+  <div class="flex items-stretch gap-0">
+
+    <!-- Paso 1: Fetch -->
+    <div class="flex-1 bg-blue-50 border border-blue-200 rounded-l-lg p-4">
+      <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">① Fetch RSS</div>
+      <div class="text-2xl font-bold text-blue-700">{{ sources_count }}</div>
+      <div class="text-xs text-blue-600 mt-0.5">fuentes activas</div>
+      <div class="text-xs text-gray-500 mt-2 leading-relaxed">
+        Descarga artículos nuevos de cada fuente RSS. Se ejecuta automáticamente cada día.
+      </div>
+      <a href="/web/sources" class="mt-3 inline-block text-xs text-blue-600 hover:underline font-medium">Ver fuentes →</a>
+    </div>
+
+    <!-- Flecha -->
+    <div class="flex items-center px-1 text-gray-300 text-xl font-light select-none">›</div>
+
+    <!-- Paso 2: IA -->
+    <div class="flex-1 {% if not worker_configured %}bg-gray-50 border border-gray-200{% else %}bg-purple-50 border border-purple-200{% endif %} p-4">
+      <div class="text-xs font-semibold {% if not worker_configured %}text-gray-400{% else %}text-purple-600{% endif %} uppercase tracking-wide mb-1">② Análisis IA</div>
+      <div class="flex items-baseline gap-2">
+        <div class="text-2xl font-bold {% if not worker_configured %}text-gray-400{% else %}text-purple-700{% endif %}">{{ pending_count }}</div>
+        <div class="text-xs {% if not worker_configured %}text-gray-400{% else %}text-purple-500{% endif %}">pendientes</div>
+      </div>
+      <div class="text-xs text-gray-500 mt-0.5">{{ processed_count }} ya analizados</div>
+      <div class="text-xs text-gray-500 mt-2 leading-relaxed">
+        Cada artículo es leído por el modelo IA: se valora su relevancia y se extrae un resumen.
+      </div>
+      {% if recent_pending %}
+      <div class="mt-3 space-y-1">
+        {% for a in recent_pending[:3] %}
+        <div class="text-xs text-gray-500 truncate">• {{ a.title }}</div>
+        {% endfor %}
+        {% if pending_count > 3 %}
+        <a href="/web/articles?processed=no" class="text-xs text-purple-600 hover:underline">+ {{ pending_count - 3 }} más →</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Flecha -->
+    <div class="flex items-center px-1 text-gray-300 text-xl font-light select-none">›</div>
+
+    <!-- Paso 3: Briefing -->
+    <div class="flex-1 bg-green-50 border border-green-200 rounded-r-lg p-4">
+      <div class="text-xs font-semibold text-green-600 uppercase tracking-wide mb-1">③ Briefing</div>
+      {% if briefing %}
+      <div class="text-2xl font-bold text-green-700">{{ briefing.date }}</div>
+      <div class="text-xs text-green-600 mt-0.5">último generado</div>
+      {% else %}
+      <div class="text-2xl font-bold text-gray-300">—</div>
+      <div class="text-xs text-gray-400 mt-0.5">sin briefings aún</div>
+      {% endif %}
+      <div class="text-xs text-gray-500 mt-2 leading-relaxed">
+        Resume los artículos más relevantes del día en texto para TTS y lectura.
+      </div>
+      {% if briefing %}
+      <a href="#briefing-section" class="mt-3 inline-block text-xs text-green-600 hover:underline font-medium">Ver briefing ↓</a>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Artículos recientes procesados ── -->
+{% if recent_processed %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm mb-6">
+  <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+    <h2 class="text-sm font-semibold text-gray-700">Últimos artículos analizados por IA</h2>
+    <a href="/web/articles?processed=yes" class="text-xs text-blue-600 hover:underline">Ver todos →</a>
+  </div>
+  <div class="divide-y divide-gray-50">
+    {% for a in recent_processed %}
+    <div class="px-5 py-3 flex items-start gap-3">
+      <!-- Score badge -->
+      <div class="flex-shrink-0 mt-0.5">
+        {% if a.relevance_score is not none %}
+          {% set score = (a.relevance_score * 100) | int %}
+          {% if score >= 70 %}
+          <span class="inline-block w-9 text-center text-xs font-bold px-1 py-0.5 rounded bg-green-100 text-green-700">{{ score }}%</span>
+          {% elif score >= 40 %}
+          <span class="inline-block w-9 text-center text-xs font-bold px-1 py-0.5 rounded bg-yellow-100 text-yellow-700">{{ score }}%</span>
+          {% else %}
+          <span class="inline-block w-9 text-center text-xs font-bold px-1 py-0.5 rounded bg-gray-100 text-gray-500">{{ score }}%</span>
+          {% endif %}
+        {% else %}
+          <span class="inline-block w-9 text-center text-xs px-1 py-0.5 rounded bg-gray-100 text-gray-400">—</span>
+        {% endif %}
+      </div>
+      <!-- Contenido -->
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-gray-800 truncate">{{ a.title }}</div>
+        <div class="flex items-center gap-2 mt-0.5">
+          <span class="text-xs text-gray-400">{{ source_map.get(a.source_id, '?') }}</span>
+          {% if a.ai_summary %}
+          <span class="text-gray-300">·</span>
+          <span class="text-xs text-gray-500 truncate max-w-xs">{{ a.ai_summary[:80] }}…</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if processed_count > 6 %}
+  <div class="px-5 py-2 border-t border-gray-100 text-center">
+    <a href="/web/articles?processed=yes" class="text-xs text-gray-500 hover:text-blue-600">
+      Ver los {{ processed_count }} artículos analizados →
+    </a>
+  </div>
+  {% endif %}
+</div>
+{% elif total_count == 0 %}
+<div class="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 mb-6">
+  <div class="text-4xl mb-3">📡</div>
+  <div class="text-sm font-medium text-gray-600">No hay artículos todavía</div>
+  <div class="text-xs mt-1">Presioná <strong>Fetch ahora</strong> para descargar los artículos de las fuentes.</div>
+</div>
+{% elif pending_count > 0 and processed_count == 0 %}
+<div class="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 mb-6">
+  <div class="text-4xl mb-3">⏳</div>
+  <div class="text-sm font-medium text-gray-600">{{ pending_count }} artículos esperan ser analizados</div>
+  <div class="text-xs mt-1">Presioná <strong>Procesar IA</strong> para que el modelo analice cada artículo.</div>
+</div>
+{% endif %}
+
+<!-- ── Briefing del día ── -->
+{% if briefing %}
+<div id="briefing-section" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900">Briefing del {{ briefing.date }}</h2>
+      <p class="text-xs text-gray-400 mt-0.5">generado {{ briefing.generated_at.strftime('%H:%M') if briefing.generated_at else '' }} · resumen diario de noticias</p>
+    </div>
+  </div>
+  <div class="mb-4">
+    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">🔊 Para TTS / Google Home</div>
+    <p class="text-gray-700 text-sm leading-relaxed bg-gray-50 rounded-lg p-3 font-mono border border-gray-100">{{ briefing.headlines_text }}</p>
+  </div>
+  <div>
+    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">📱 Lectura completa</div>
+    <pre class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed bg-gray-50 rounded-lg p-3 border border-gray-100">{{ briefing.full_text }}</pre>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Historial de briefings ── -->
 {% if recent_briefings %}
 <div class="bg-white rounded-lg border border-gray-200 p-4">
-  <h3 class="text-sm font-semibold text-gray-700 mb-3">Briefings recientes</h3>
+  <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Historial de briefings</h3>
   <div class="space-y-1">
     {% for b in recent_briefings %}
-    <div class="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
-      <span class="font-mono text-gray-600">{{ b.date }}</span>
-      <span class="text-gray-400 text-xs">{{ b.headlines_text[:60] }}…</span>
+    <div class="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
+      <span class="font-mono text-gray-600 text-xs">{{ b.date }}</span>
+      <span class="text-gray-400 text-xs truncate max-w-xs ml-4">{{ b.headlines_text[:70] }}…</span>
     </div>
     {% endfor %}
   </div>
 </div>
 {% endif %}
+
+<script>
+const SPINNER_SVG = `<svg class="animate-spin h-3.5 w-3.5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+</svg>`;
+
+const JOB_LABELS = {
+  fetch:    { label: "Fetch RSS",       running: "Fetching…",   color: "text-blue-400"   },
+  process:  { label: "Procesando IA",   running: "Procesando…", color: "text-purple-400" },
+  briefing: { label: "Generando…",      running: "Generando…",  color: "text-green-400"  },
+};
+
+const BTN_IDS = {
+  fetch:    "btn-fetch",
+  process:  "btn-process",
+  briefing: "btn-briefing",
+};
+
+// Guardar HTML original de cada botón antes de cualquier cambio
+const originalBtnHTML = {};
+document.addEventListener("DOMContentLoaded", function() {
+  document.querySelectorAll(".job-btn").forEach(function(b) {
+    originalBtnHTML[b.id] = b.innerHTML;
+  });
+});
+// Fallback si DOMContentLoaded ya pasó
+document.querySelectorAll(".job-btn").forEach(function(b) {
+  originalBtnHTML[b.id] = b.innerHTML;
+});
+
+function log(msg, color) {
+  const panel = document.getElementById("job-panel");
+  const logEl  = document.getElementById("job-log");
+  panel.classList.remove("hidden");
+
+  const now  = new Date().toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const line = document.createElement("div");
+  line.className = color || "text-gray-300";
+  line.textContent = "[" + now + "] " + msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setPanelDot(active) {
+  const dot = document.getElementById("job-panel-dot");
+  if (!dot) return;
+  if (active) {
+    dot.className = "w-2 h-2 rounded-full bg-green-400 animate-pulse";
+  } else {
+    dot.className = "w-2 h-2 rounded-full bg-gray-500";
+  }
+}
+
+function setRunning(activeJob) {
+  const info = JOB_LABELS[activeJob];
+  const activeId = BTN_IDS[activeJob];
+  setPanelDot(true);
+
+  document.querySelectorAll(".job-btn").forEach(function(b) {
+    b.disabled = true;
+    if (b.id === activeId) {
+      b.innerHTML = SPINNER_SVG + `<span>${info.running}</span>`;
+      b.classList.remove("opacity-40");
+      b.classList.add("ring-2", "ring-white/50", "ring-offset-1");
+    } else {
+      b.classList.add("opacity-25", "scale-95");
+    }
+  });
+}
+
+function resetButtons() {
+  setPanelDot(false);
+  document.querySelectorAll(".job-btn").forEach(function(b) {
+    b.disabled = false;
+    if (originalBtnHTML[b.id]) {
+      b.innerHTML = originalBtnHTML[b.id];
+    }
+    b.classList.remove("ring-2", "ring-white/50", "ring-offset-1", "opacity-25", "scale-95");
+  });
+  {% if not worker_configured %}
+  const procBtn = document.getElementById("btn-process");
+  if (procBtn) procBtn.disabled = true;
+  {% endif %}
+}
+
+function clearLog() {
+  const logEl = document.getElementById("job-log");
+  logEl.replaceChildren();
+  document.getElementById("job-panel").classList.add("hidden");
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  resetButtons();
+}
+
+async function triggerJob(job, btn) {
+  const info = JOB_LABELS[job];
+  setRunning(job);
+  log("▶ Iniciando: " + info.label + "…", info.color);
+
+  try {
+    const res  = await fetch("/api/v1/jobs/" + job, { method: "POST" });
+    const data = await res.json();
+
+    if (res.ok) {
+      log("✓ " + info.label + " aceptado — corriendo en segundo plano.", info.color);
+      if (job === "fetch") {
+        log("  Descargando artículos de las fuentes RSS. Tarda ~10 s.", "text-gray-500");
+        startPolling();
+      } else if (job === "process") {
+        log("  El modelo IA analiza cada artículo pendiente. Puede tardar varios minutos.", "text-gray-500");
+        startPolling();
+      } else if (job === "briefing") {
+        log("  Generando resumen del día. Recargando en 4 s…", "text-gray-500");
+        setTimeout(function() { location.reload(); }, 4000);
+      }
+    } else if (res.status === 409) {
+      log("⚠ " + info.label + " ya está en ejecución. Esperá a que termine.", "text-yellow-400");
+      resetButtons();
+    } else {
+      log("✗ Error " + res.status + ": " + (data.detail || JSON.stringify(data)), "text-red-400");
+      resetButtons();
+    }
+  } catch (err) {
+    log("✗ Error de red: " + err.message, "text-red-400");
+    resetButtons();
+  }
+}
+
+// ── Polling: actualiza contadores y tarjetas en vivo ──────────────────────────
+let pollTimer = null;
+let lastProcessed = {{ processed_count }};
+let lastPending   = {{ pending_count }};
+
+function startPolling() {
+  if (pollTimer) return;
+
+  function tick() {
+    fetch("/api/v1/articles")
+      .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function(arts) {
+        const total     = arts.length;
+        const processed = arts.filter(function(a) { return a.processed; }).length;
+        const pending   = total - processed;
+
+        // Actualizar la tarjeta de la pipeline (paso 2)
+        const pendingEl   = document.querySelector("#stat-pending");
+        const processedEl = document.querySelector("#stat-processed");
+        if (pendingEl)   pendingEl.textContent = pending;
+        if (processedEl) processedEl.textContent = processed;
+
+        // Actualizar el nro dentro del bloque pipeline
+        document.querySelectorAll(".pipeline-pending").forEach(function(el)   { el.textContent = pending; });
+        document.querySelectorAll(".pipeline-processed").forEach(function(el) { el.textContent = processed; });
+
+        if (processed > lastProcessed) {
+          log("  ↑ Analizados: " + lastProcessed + " → " + processed + "  (" + pending + " pendientes)", "text-purple-400");
+          lastProcessed = processed;
+        }
+        if (pending === 0 && total > 0 && lastPending > 0) {
+          log("  ✓ Todos los artículos fueron analizados.", "text-green-400");
+        }
+        lastPending = pending;
+
+        if (pending === 0 && total > 0) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          resetButtons();
+        }
+      })
+      .catch(function() {});
+  }
+
+  tick();
+  pollTimer = setInterval(tick, 5000);
+}
+</script>
 {% endblock %}

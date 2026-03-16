@@ -16,6 +16,7 @@ El scheduler se apaga limpiamente en el shutdown.
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -88,6 +89,13 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     logger.info("Scheduler iniciado. Fetch diario a las %s UTC.", settings.daily_fetch_time)
 
+    # Locks por job — evitan ejecuciones concurrentes disparadas desde la UI o API
+    app.state.job_locks = {
+        "fetch":    threading.Lock(),
+        "process":  threading.Lock(),
+        "briefing": threading.Lock(),
+    }
+
     logger.info("daily-news iniciado y listo.")
     yield
 
@@ -119,6 +127,13 @@ app.include_router(feed_router)   # /feed.xml (sin prefijo)
 from app.web.routes import web_router  # noqa: E402
 
 app.include_router(web_router)   # /web/*
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    """Redirige la raíz al dashboard de la Web UI."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/web/", status_code=302)
 
 
 # ─── MCP ──────────────────────────────────────────────────────────────────────

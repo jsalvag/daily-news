@@ -342,3 +342,52 @@ def upsert_app_setting(session: Session, key: str, value: str) -> None:
     else:
         setting.value      = value
         setting.updated_at = datetime.utcnow()
+
+
+# ─── Article listing ──────────────────────────────────────────────────────────
+
+def get_recent_articles(
+    session: Session,
+    limit: int = 100,
+    offset: int = 0,
+    processed: Optional[bool] = None,
+    source_id: Optional[int] = None,
+) -> list[Article]:
+    """
+    Retorna artículos recientes ordenados por fecha de fetch descendente.
+
+    Args:
+        limit:     Máximo de artículos a devolver.
+        offset:    Cuántos saltar (para paginación).
+        processed: True → solo procesados, False → solo pendientes, None → todos.
+        source_id: Si se provee, filtra por fuente.
+    """
+    stmt = (
+        select(Article)
+        .order_by(Article.fetched_at.desc(), Article.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if processed is True:
+        stmt = stmt.where(Article.processed.is_(True))
+    elif processed is False:
+        stmt = stmt.where(Article.processed.is_(False))
+    if source_id is not None:
+        stmt = stmt.where(Article.source_id == source_id)
+    return list(session.execute(stmt).scalars().all())
+
+
+def count_articles(
+    session: Session,
+    processed: Optional[bool] = None,
+    source_id: Optional[int] = None,
+) -> int:
+    """Cuenta artículos con los mismos filtros que get_recent_articles."""
+    stmt = select(func.count()).select_from(Article)
+    if processed is True:
+        stmt = stmt.where(Article.processed.is_(True))
+    elif processed is False:
+        stmt = stmt.where(Article.processed.is_(False))
+    if source_id is not None:
+        stmt = stmt.where(Article.source_id == source_id)
+    return session.execute(stmt).scalar_one()

@@ -17,12 +17,14 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import get_db
 from app.storage.crud import (
+    count_articles,
     delete_model_config,
     get_all_model_configs,
     get_all_sources,
     get_app_setting,
     get_latest_briefing,
     get_model_config,
+    get_recent_articles,
     get_recent_briefings,
     toggle_source,
     upsert_app_setting,
@@ -42,9 +44,20 @@ def web_index(request: Request, db: Session = Depends(get_db)):
     """Dashboard: briefing más reciente + estado general."""
     briefing = get_latest_briefing(db)
     recent = get_recent_briefings(db, limit=7)
-    sources_count = len(get_all_sources(db))
+    sources = get_all_sources(db)
+    sources_count = len(sources)
     models = get_all_model_configs(db)
     worker_configured = any(m.role == "worker" for m in models)
+    pending_count = count_articles(db, processed=False)
+    processed_count = count_articles(db, processed=True)
+    total_count = pending_count + processed_count
+
+    # Últimos 6 artículos procesados para la preview del dashboard
+    recent_processed = get_recent_articles(db, limit=6, processed=True)
+    # Artículos pendientes más recientes
+    recent_pending = get_recent_articles(db, limit=4, processed=False)
+
+    source_map = {s.id: s.name for s in sources}
 
     return templates.TemplateResponse(
         "index.html",
@@ -54,6 +67,59 @@ def web_index(request: Request, db: Session = Depends(get_db)):
             "recent_briefings": recent,
             "sources_count": sources_count,
             "worker_configured": worker_configured,
+            "pending_count": pending_count,
+            "processed_count": processed_count,
+            "total_count": total_count,
+            "recent_processed": recent_processed,
+            "recent_pending": recent_pending,
+            "source_map": source_map,
+        },
+    )
+
+
+# ─── Artículos ───────────────────────────────────────────────────────────────
+
+PAGE_SIZE = 50
+
+@web_router.get("/articles", response_class=HTMLResponse)
+def web_articles(
+    request: Request,
+    db: Session = Depends(get_db),
+    page: int = 1,
+    processed: str = "all",   # "all" | "yes" | "no"
+    source_id: int = None,
+):
+    """Lista paginada de artículos con filtros."""
+    processed_flag: bool | None = None
+    if processed == "yes":
+        processed_flag = True
+    elif processed == "no":
+        processed_flag = False
+
+    offset = (page - 1) * PAGE_SIZE
+    articles = get_recent_articles(
+        db, limit=PAGE_SIZE, offset=offset,
+        processed=processed_flag, source_id=source_id,
+    )
+    total = count_articles(db, processed=processed_flag, source_id=source_id)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    sources = get_all_sources(db)
+    source_map = {s.id: s.name for s in sources}
+
+    return templates.TemplateResponse(
+        "articles.html",
+        {
+            "request": request,
+            "articles": articles,
+            "source_map": source_map,
+            "sources": sources,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "processed_filter": processed,
+            "source_id_filter": source_id,
+            "page_size": PAGE_SIZE,
         },
     )
 

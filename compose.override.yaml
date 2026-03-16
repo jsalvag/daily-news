@@ -1,0 +1,23 @@
+# compose.override.yaml — Overrides para desarrollo local
+#
+# Docker Compose fusiona este archivo con compose.yaml automáticamente.
+# No hace falta ningún flag extra: `docker compose up app` ya lo usa.
+#
+# Beneficios vs. el servicio de producción:
+#   - Monta ./app sobre /app/app  → cambios en Python y templates se
+#     reflejan sin rebuild (los archivos del host sobreescriben los de la imagen).
+#   - Activa --reload de uvicorn  → el servidor se reinicia solo al guardar
+#     cualquier archivo dentro de ./app.
+#
+# Para volver al comportamiento de producción sin mounts:
+#   docker compose -f compose.yaml up app
+
+services:
+  app:
+    volumes:
+      - ./app:/app/app              # código Python + templates live
+    command: ["python", "-m", "uvicorn", "app.main:app",
+              "--host", "0.0.0.0",
+              "--port", "8000",
+              "--reload",
+              "--reload-dir", "/app/app"]

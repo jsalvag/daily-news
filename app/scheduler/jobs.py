@@ -25,6 +25,7 @@ bien antes del momento en que el usuario se levanta y pregunta al Google Home.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -36,6 +37,7 @@ from app.fetcher.rss import fetch_feeds_concurrently
 from app.fetcher.sources_loader import load_and_sync
 from app.processor.llm import process_pending_articles
 from app.storage.crud import (
+    count_articles,
     get_all_sources,
     get_articles_for_date,
     get_model_config,
@@ -169,16 +171,29 @@ def make_fetch_job(
 
 def make_process_job(
     session_factory: Callable[[], Session],
-    limit: int = 100,
+    batch_size: int = 50,
+    batch_delay_seconds: float = 30.0,
 ) -> Callable[[], None]:
     """
-    Retorna el job de procesamiento IA: analiza artículos pendientes.
+    Retorna el job de procesamiento IA.
 
-    Lee la configuración del modelo 'worker' desde la BD en cada ejecución
-    para que los cambios en la UI tomen efecto sin reiniciar el scheduler.
+    Procesa TODOS los artículos pendientes iterando en batches hasta vaciar
+    la cola por completo. Entre cada batch espera `batch_delay_seconds` para
+    respetar los rate limits de los proveedores LLM gratuitos.
+
+    La configuración del modelo 'worker' se lee desde la BD en cada ejecución,
+    por lo que los cambios en la UI toman efecto sin reiniciar el scheduler.
+
+    Args:
+        batch_size:           Artículos por llamada al LLM (default 50).
+        batch_delay_seconds:  Pausa entre batches en segundos (default 30).
+                              Ajustar según el tier del proveedor LLM.
     """
     def _job() -> None:
-        logger.info("Job process: iniciando.")
+        logger.info(
+            "Job process: iniciando (batch_size=%d, delay=%ds).",
+            batch_size, int(batch_delay_seconds),
+        )
         session = session_factory()
         try:
             cfg = get_model_config(session, "worker")
@@ -189,15 +204,45 @@ def make_process_job(
                 )
                 return
 
-            result = process_pending_articles(
-                session,
-                model=cfg.litellm_model,
-                api_key=cfg.api_key,
-                base_url=cfg.base_url,
-                limit=limit,
+            total_processed = 0
+            total_skipped = 0
+            batch_num = 0
+
+            while True:
+                pending = count_articles(session, processed=False)
+                if pending == 0:
+                    break
+
+                batch_num += 1
+                logger.info(
+                    "Job process: batch %d — %d artículos pendientes.", batch_num, pending
+                )
+
+                result = process_pending_articles(
+                    session,
+                    model=cfg.litellm_model,
+                    api_key=cfg.api_key,
+                    base_url=cfg.base_url,
+                    limit=batch_size,
+                )
+                session.commit()
+                total_processed += result.processed
+                total_skipped += result.skipped
+
+                remaining = count_articles(session, processed=False)
+                if remaining > 0:
+                    logger.info(
+                        "Job process: batch %d completado (%s). "
+                        "%d pendientes — pausa de %ds antes del siguiente batch.",
+                        batch_num, result, remaining, int(batch_delay_seconds),
+                    )
+                    time.sleep(batch_delay_seconds)
+
+            logger.info(
+                "Job process: cola vaciada. %d procesados, %d omitidos en %d batches.",
+                total_processed, total_skipped, batch_num,
             )
-            session.commit()
-            logger.info("Job process: %s", result)
+
         except Exception as exc:
             logger.exception("Job process: error inesperado: %s", exc)
             session.rollback()
