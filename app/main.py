@@ -30,7 +30,7 @@ from app.api.routes import router
 from app.config import get_settings
 from app.fetcher.sources_loader import load_and_sync
 from app.scheduler.jobs import create_scheduler
-from app.storage.crud import get_app_setting
+from app.storage.crud import get_app_setting, get_pipeline_slots
 from app.storage.models import create_db_engine, get_session_factory, init_db
 
 logging.basicConfig(
@@ -82,16 +82,26 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("No se pudo leer daily_fetch_time desde BD: %s", exc)
 
+    # Leer pipeline_slots desde BD; si no existe, usar daily_fetch_time como slot único
+    try:
+        db = session_factory()
+        slots = get_pipeline_slots(db)
+        db.close()
+        logger.info("Pipeline slots cargados desde BD: %s", slots)
+    except Exception as exc:
+        logger.warning("No se pudo leer pipeline_slots desde BD: %s", exc)
+        slots = [settings.daily_fetch_time]
+
     # Scheduler
     scheduler = create_scheduler(
-        daily_fetch_time=settings.daily_fetch_time,
+        slots=slots,
         session_factory=session_factory,
         sources_config_path=settings.sources_config_path,
         audio_dir=settings.audio_dir,
     )
     scheduler.start()
     app.state.scheduler = scheduler
-    logger.info("Scheduler iniciado. Fetch diario a las %s UTC.", settings.daily_fetch_time)
+    logger.info("Scheduler iniciado. Slots: %s UTC.", ", ".join(slots))
 
     # Locks por job — evitan ejecuciones concurrentes disparadas desde la UI o API
     app.state.job_locks = {

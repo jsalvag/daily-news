@@ -212,9 +212,14 @@ def update_article_ai(
 # ─── DailyBriefing ────────────────────────────────────────────────────────────
 
 def get_briefing_by_date(session: Session, target_date: date) -> Optional[DailyBriefing]:
-    """Retorna el briefing diario de una fecha, o None si no existe."""
+    """Retorna el briefing más reciente de una fecha, o None si no existe."""
     date_str = target_date.strftime("%Y-%m-%d")
-    stmt = select(DailyBriefing).where(DailyBriefing.date == date_str)
+    stmt = (
+        select(DailyBriefing)
+        .where(DailyBriefing.date == date_str)
+        .order_by(DailyBriefing.run_at.desc())
+        .limit(1)
+    )
     return session.execute(stmt).scalars().first()
 
 
@@ -224,21 +229,28 @@ def upsert_briefing(
     headlines_text: str,
     full_text: str,
     article_ids: list[int],
+    run_at: str | None = None,
 ) -> DailyBriefing:
     """
-    Crea o reemplaza el briefing de una fecha.
+    Crea o actualiza el briefing de una fecha/run_at específico.
 
-    Si ya existe un briefing para esa fecha, lo actualiza.
-    Si no existe, lo crea.
+    Si run_at es None, usa el momento actual (YYYY-MM-DD HH:MM).
+    Busca un briefing existente por run_at (único por ejecución).
     """
+    if run_at is None:
+        run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     date_str = target_date.strftime("%Y-%m-%d")
     ids_str  = ",".join(str(i) for i in article_ids)
 
-    briefing = get_briefing_by_date(session, target_date)
+    # Buscar por run_at (único identificador de ejecución)
+    stmt = select(DailyBriefing).where(DailyBriefing.run_at == run_at)
+    briefing = session.execute(stmt).scalars().first()
 
     if briefing is None:
         briefing = DailyBriefing(
             date=date_str,
+            run_at=run_at,
             headlines_text=headlines_text,
             full_text=full_text,
             article_ids=ids_str,
@@ -257,7 +269,7 @@ def get_latest_briefing(session: Session) -> Optional[DailyBriefing]:
     """Retorna el briefing más reciente disponible."""
     stmt = (
         select(DailyBriefing)
-        .order_by(DailyBriefing.date.desc())
+        .order_by(DailyBriefing.run_at.desc())
         .limit(1)
     )
     return session.execute(stmt).scalars().first()
@@ -267,7 +279,7 @@ def get_recent_briefings(session: Session, limit: int = 7) -> list[DailyBriefing
     """Retorna los N briefings más recientes, del más nuevo al más antiguo."""
     stmt = (
         select(DailyBriefing)
-        .order_by(DailyBriefing.date.desc())
+        .order_by(DailyBriefing.run_at.desc())
         .limit(limit)
     )
     return list(session.execute(stmt).scalars().all())
@@ -388,6 +400,35 @@ def update_briefing_audio(session: Session, briefing_id: int, audio_filename: st
         .where(DailyBriefing.id == briefing_id)
         .values(audio_filename=audio_filename)
     )
+
+
+def get_pipeline_slots(session: Session) -> list[str]:
+    """
+    Retorna la lista de slots HH:MM configurados para el pipeline diario.
+
+    Lee pipeline_slots desde app_settings (comma-separated).
+    Si no existe, cae a daily_fetch_time. Si tampoco, retorna ["06:00"].
+    """
+    slots_str = get_app_setting(session, "pipeline_slots")
+    if slots_str:
+        return [s.strip() for s in slots_str.split(",") if s.strip()]
+    fallback = get_app_setting(session, "daily_fetch_time")
+    if fallback:
+        return [fallback.strip()]
+    return ["06:00"]
+
+
+def save_pipeline_slots(session: Session, slots: list[str]) -> None:
+    """
+    Persiste los slots del pipeline en app_settings.
+
+    Guarda pipeline_slots (comma-joined) y actualiza daily_fetch_time
+    al primer slot para mantener compatibilidad hacia atrás.
+    """
+    slots_str = ",".join(slots)
+    upsert_app_setting(session, "pipeline_slots", slots_str)
+    if slots:
+        upsert_app_setting(session, "daily_fetch_time", slots[0])
 
 
 # ─── Article listing ──────────────────────────────────────────────────────────

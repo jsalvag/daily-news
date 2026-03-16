@@ -189,7 +189,7 @@
 <div id="briefing-section" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
   <div class="flex items-start justify-between mb-4 gap-4 flex-wrap">
     <div>
-      <h2 class="text-lg font-semibold text-gray-900">Briefing del {{ briefing.date }}</h2>
+      <h2 class="text-lg font-semibold text-gray-900">Briefing del {{ briefing.date }} · {{ briefing.run_at[11:] if briefing.run_at else '' }}</h2>
       <p class="text-xs text-gray-400 mt-0.5">generado {{ briefing.generated_at.strftime('%H:%M') if briefing.generated_at else '' }} · resumen diario de noticias</p>
     </div>
     {% if briefing.audio_filename %}
@@ -231,7 +231,7 @@
   <div class="space-y-1">
     {% for b in recent_briefings %}
     <div class="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
-      <span class="font-mono text-gray-600 text-xs">{{ b.date }}</span>
+      <span class="font-mono text-gray-600 text-xs">{{ b.date }}{% if b.run_at %} {{ b.run_at[11:] }}{% endif %}</span>
       <span class="text-gray-400 text-xs truncate max-w-xs ml-4">{{ b.headlines_text[:70] }}…</span>
     </div>
     {% endfor %}

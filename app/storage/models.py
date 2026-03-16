@@ -74,7 +74,8 @@ class DailyBriefing(Base):
     __tablename__ = "daily_briefings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    date = Column(String(10), nullable=False, unique=True)  # YYYY-MM-DD
+    date = Column(String(10), nullable=False)       # YYYY-MM-DD, sin unique (N runs/día)
+    run_at = Column(String(16), nullable=False, unique=True, default="")  # YYYY-MM-DD HH:MM
     headlines_text = Column(Text, nullable=True)   # versión corta (Google Home / TTS)
     full_text = Column(Text, nullable=True)         # versión completa (iPhone)
     article_ids = Column(Text, nullable=True)       # IDs separados por coma
@@ -82,7 +83,7 @@ class DailyBriefing(Base):
     audio_filename = Column(String(200), nullable=True)  # nombre del MP3 generado por TTS
 
     def __repr__(self) -> str:
-        return f"<DailyBriefing date={self.date!r}>"
+        return f"<DailyBriefing date={self.date!r} run_at={self.run_at!r}>"
 
 
 class AIModelConfig(Base):
@@ -133,20 +134,49 @@ def create_db_engine(database_url: str):
 
 def init_db(engine) -> None:
     """Crea todas las tablas si no existen y aplica migraciones incrementales."""
-    Base.metadata.create_all(bind=engine)
-
-    # Migración: agregar columnas nuevas a tablas existentes si no están presentes.
-    # SQLite soporta ALTER TABLE ADD COLUMN para columnas nullable sin valor default.
-    _migrations = [
-        ("daily_briefings", "audio_filename", "VARCHAR(200)"),
-    ]
     inspector = inspect(engine)
-    with engine.connect() as conn:
-        for table, column, col_type in _migrations:
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            if column not in existing:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+    existing_tables = set(inspector.get_table_names())
+
+    # ── Migración: daily_briefings → agregar run_at y quitar UNIQUE de date ──
+    # SQLite no soporta DROP CONSTRAINT, así que recreamos la tabla completa.
+    if "daily_briefings" in existing_tables:
+        existing_cols = {c["name"] for c in inspector.get_columns("daily_briefings")}
+        if "run_at" not in existing_cols:
+            # Necesitamos recrear la tabla para agregar run_at y quitar UNIQUE de date.
+            # Detectar si audio_filename existe en la tabla vieja.
+            has_audio = "audio_filename" in existing_cols
+            audio_select = ", audio_filename" if has_audio else ", NULL AS audio_filename"
+
+            with engine.connect() as conn:
+                # 1. Crear tabla nueva con el esquema actualizado
+                conn.execute(text("""
+                    CREATE TABLE daily_briefings_new (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        date VARCHAR(10) NOT NULL,
+                        run_at VARCHAR(16) NOT NULL UNIQUE DEFAULT '',
+                        headlines_text TEXT,
+                        full_text TEXT,
+                        article_ids TEXT,
+                        generated_at DATETIME,
+                        audio_filename VARCHAR(200)
+                    )
+                """))
+                # 2. Migrar datos: run_at = date || ' 00:00'
+                conn.execute(text(f"""
+                    INSERT INTO daily_briefings_new
+                        (id, date, run_at, headlines_text, full_text, article_ids,
+                         generated_at, audio_filename)
+                    SELECT id, date, (date || ' 00:00'), headlines_text, full_text,
+                           article_ids, generated_at{audio_select}
+                    FROM daily_briefings
+                """))
+                # 3. Eliminar tabla vieja y renombrar la nueva
+                conn.execute(text("DROP TABLE daily_briefings"))
+                conn.execute(text("ALTER TABLE daily_briefings_new RENAME TO daily_briefings"))
                 conn.commit()
+
+    # Crear tablas que no existen (incluye daily_briefings si es nueva BD)
+    Base.metadata.create_all(bind=engine)
 
 
 def get_session_factory(engine):

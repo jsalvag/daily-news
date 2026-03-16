@@ -9,40 +9,51 @@
 
 <!-- ── Scheduler ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-  <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclo diario automático</h2>
+  <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclos diarios automáticos</h2>
   <p class="text-xs text-gray-500 mb-4">
-    Hora UTC a la que se ejecuta el ciclo fetch → proceso IA → briefing + audio.
-    El proceso IA se lanza 1 h después y el briefing 2 h después.
+    Definí cuántas veces al día se ejecuta el pipeline completo. Cada slot arranca fetch→IA→briefing.
+    El proceso IA se lanza 1 h después y el briefing 2 h después de cada slot.
   </p>
 
-  <form action="/web/settings/scheduler" method="post" class="flex items-end gap-4">
-    <div>
-      <label class="block text-xs font-medium text-gray-700 mb-1">
-        Hora del fetch diario <span class="text-red-500">*</span>
-        <span class="text-gray-400 font-normal">(UTC, formato HH:MM)</span>
-      </label>
-      <input type="text" name="daily_fetch_time" required
-             value="{{ daily_fetch_time }}"
-             placeholder="06:00"
-             pattern="^([01]?\d|2[0-3]):[0-5]\d$"
-             class="border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28" />
+  <form action="/web/settings/scheduler" method="post" id="scheduler-form">
+    <div id="slots-list" class="space-y-2 mb-4">
+      {% for slot in slots %}
+      <div class="slot-row flex items-center gap-2">
+        <input type="text" name="slots" required
+               value="{{ slot }}"
+               placeholder="06:00"
+               pattern="^([01]?\d|2[0-3]):[0-5]\d$"
+               class="border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28" />
+        <button type="button" onclick="removeSlot(this)"
+                class="remove-slot-btn text-gray-400 hover:text-red-500 text-lg leading-none px-1 transition"
+                title="Eliminar slot">×</button>
+      </div>
+      {% endfor %}
     </div>
-    <button type="submit"
-            class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
-      Guardar
-    </button>
+
+    <div class="flex items-center gap-3 mb-5">
+      <button type="button" onclick="addSlot()"
+              class="text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-300 rounded px-3 py-1.5 hover:bg-blue-50 transition">
+        ＋ Agregar slot
+      </button>
+      <button type="submit"
+              class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+        Guardar
+      </button>
+    </div>
   </form>
 
-  <!-- Timeline visual -->
-  <div class="mt-5 flex items-center gap-0 text-xs text-gray-500">
-    {% set parts = daily_fetch_time.split(':') %}
-    {% set h = parts[0] | int %}
-    {% set m = parts[1] | int %}
-    {% set proc_h = ((h * 60 + m + 60) // 60) % 24 %}
-    {% set proc_m = (h * 60 + m + 60) % 60 %}
-    {% set brief_h = ((h * 60 + m + 120) // 60) % 24 %}
-    {% set brief_m = (h * 60 + m + 120) % 60 %}
-
+  <!-- Timelines visuales (uno por slot) -->
+  {% for slot in slots %}
+  {% set parts = slot.split(':') %}
+  {% set h = parts[0] | int %}
+  {% set m = parts[1] | int %}
+  {% set proc_h = ((h * 60 + m + 60) // 60) % 24 %}
+  {% set proc_m = (h * 60 + m + 60) % 60 %}
+  {% set brief_h = ((h * 60 + m + 120) // 60) % 24 %}
+  {% set brief_m = (h * 60 + m + 120) % 60 %}
+  <div class="mt-3 flex items-center gap-0 text-xs text-gray-500 {% if not loop.first %}border-t border-gray-100 pt-3{% endif %}">
+    <span class="text-gray-400 mr-3 font-medium">Slot {{ loop.index }}:</span>
     <div class="flex flex-col items-center">
       <div class="w-3 h-3 bg-blue-500 rounded-full mb-1"></div>
       <span class="font-semibold text-blue-600">{{ "%02d:%02d" | format(h, m) }}</span>
@@ -58,9 +69,10 @@
     <div class="flex flex-col items-center">
       <div class="w-3 h-3 bg-green-500 rounded-full mb-1"></div>
       <span class="font-semibold text-green-600">{{ "%02d:%02d" | format(brief_h, brief_m) }}</span>
-      <span class="text-gray-400 mt-0.5">Briefing + 🔊 Audio</span>
+      <span class="text-gray-400 mt-0.5">Briefing + Audio</span>
     </div>
   </div>
+  {% endfor %}
 </div>
 
 <!-- ── Text-to-Speech ── -->
@@ -269,5 +281,56 @@ function showTTSSection(provider) {
   document.getElementById("section-openai").classList.toggle("hidden", provider !== "openai");
   document.getElementById("section-elevenlabs").classList.toggle("hidden", provider !== "elevenlabs");
 }
+
+function _makeSlotRow() {
+  var row = document.createElement("div");
+  row.className = "slot-row flex items-center gap-2";
+
+  var input = document.createElement("input");
+  input.type = "text";
+  input.name = "slots";
+  input.required = true;
+  input.placeholder = "06:00";
+  input.pattern = "^([01]?\\d|2[0-3]):[0-5]\\d$";
+  input.className = "border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28";
+
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "remove-slot-btn text-gray-400 hover:text-red-500 text-lg leading-none px-1 transition";
+  btn.title = "Eliminar slot";
+  btn.textContent = "\u00d7";
+  btn.addEventListener("click", function() { removeSlot(btn); });
+
+  row.appendChild(input);
+  row.appendChild(btn);
+  return row;
+}
+
+function addSlot() {
+  var list = document.getElementById("slots-list");
+  var row = _makeSlotRow();
+  list.appendChild(row);
+  updateRemoveButtons();
+  row.querySelector("input").focus();
+}
+
+function removeSlot(btn) {
+  var list = document.getElementById("slots-list");
+  var rows = list.querySelectorAll(".slot-row");
+  if (rows.length <= 1) return;
+  btn.closest(".slot-row").remove();
+  updateRemoveButtons();
+}
+
+function updateRemoveButtons() {
+  var list = document.getElementById("slots-list");
+  var rows = list.querySelectorAll(".slot-row");
+  rows.forEach(function(row) {
+    var btn = row.querySelector(".remove-slot-btn");
+    if (btn) btn.disabled = rows.length <= 1;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", updateRemoveButtons);
 </script>
 {% endblock %}

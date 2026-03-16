@@ -363,19 +363,19 @@ class TestCreateScheduler:
         mock_factory = MagicMock()
 
         scheduler = create_scheduler(
-            daily_fetch_time="03:00",
+            slots=["03:00"],
             session_factory=mock_factory,
             sources_config_path="config/sources.yaml",
         )
 
         job_ids = {job.id for job in scheduler.get_jobs()}
-        assert "daily_fetch" in job_ids
-        assert "daily_process" in job_ids
-        assert "daily_briefing" in job_ids
+        assert "pipeline_1_fetch" in job_ids
+        assert "pipeline_1_process" in job_ids
+        assert "pipeline_1_briefing" in job_ids
 
     def test_jobs_con_horario_correcto(self):
         scheduler = create_scheduler(
-            daily_fetch_time="03:00",
+            slots=["03:00"],
             session_factory=MagicMock(),
             sources_config_path="config/sources.yaml",
         )
@@ -387,18 +387,18 @@ class TestCreateScheduler:
             fields = {f.name: f for f in job.trigger.fields}
             return int(str(fields["hour"])), int(str(fields["minute"]))
 
-        fetch_h, fetch_m       = _trigger_hhmm(jobs["daily_fetch"])
-        process_h, process_m   = _trigger_hhmm(jobs["daily_process"])
-        briefing_h, briefing_m = _trigger_hhmm(jobs["daily_briefing"])
+        fetch_h, fetch_m       = _trigger_hhmm(jobs["pipeline_1_fetch"])
+        process_h, process_m   = _trigger_hhmm(jobs["pipeline_1_process"])
+        briefing_h, briefing_m = _trigger_hhmm(jobs["pipeline_1_briefing"])
 
         assert (fetch_h, fetch_m)    == (3, 0)
         assert (process_h, process_m)  == (4, 0)
         assert (briefing_h, briefing_m) == (5, 0)
 
     def test_horario_wrap_a_medianoche(self):
-        """Si DAILY_FETCH_TIME=23:00, el proceso debe quedar en 00:00 del día siguiente."""
+        """Si el slot es 23:00, el proceso debe quedar en 00:00 del día siguiente."""
         scheduler = create_scheduler(
-            daily_fetch_time="23:00",
+            slots=["23:00"],
             session_factory=MagicMock(),
             sources_config_path="config/sources.yaml",
         )
@@ -408,9 +408,9 @@ class TestCreateScheduler:
             fields = {f.name: f for f in job.trigger.fields}
             return int(str(fields["hour"])), int(str(fields["minute"]))
 
-        _, _ = _trigger_hhmm(jobs["daily_fetch"])     # 23:00
-        ph, pm = _trigger_hhmm(jobs["daily_process"])  # 00:00
-        bh, bm = _trigger_hhmm(jobs["daily_briefing"]) # 01:00
+        _, _ = _trigger_hhmm(jobs["pipeline_1_fetch"])     # 23:00
+        ph, pm = _trigger_hhmm(jobs["pipeline_1_process"])  # 00:00
+        bh, bm = _trigger_hhmm(jobs["pipeline_1_briefing"]) # 01:00
 
         assert (ph, pm) == (0, 0)
         assert (bh, bm) == (1, 0)
@@ -418,7 +418,7 @@ class TestCreateScheduler:
     def test_lanza_error_con_tiempo_invalido(self):
         with pytest.raises(ValueError):
             create_scheduler(
-                daily_fetch_time="invalid",
+                slots=["invalid"],
                 session_factory=MagicMock(),
                 sources_config_path="config/sources.yaml",
             )

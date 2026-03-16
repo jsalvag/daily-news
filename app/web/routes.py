@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -24,9 +25,11 @@ from app.storage.crud import (
     get_app_setting,
     get_latest_briefing,
     get_model_config,
+    get_pipeline_slots,
     get_recent_articles,
     get_recent_briefings,
     get_tts_config,
+    save_pipeline_slots,
     save_tts_config,
     toggle_source,
     upsert_app_setting,
@@ -220,11 +223,13 @@ def web_settings(request: Request, db: Session = Depends(get_db)):
     """Ajustes de la aplicación (scheduler, TTS, feed, etc.)."""
     s = request.app.state.settings
     tts = get_tts_config(db)
+    slots = get_pipeline_slots(db)
     return templates.TemplateResponse(
         "settings.html",
         {
             "request": request,
             "daily_fetch_time": s.daily_fetch_time,
+            "slots": slots,
             "feed_title": s.feed_title,
             "feed_description": s.feed_description,
             "feed_base_url": s.feed_base_url,
@@ -260,37 +265,40 @@ def web_update_tts(
 def web_update_scheduler(
     request: Request,
     db: Session = Depends(get_db),
-    daily_fetch_time: str = Form(...),
+    slots: List[str] = Form(...),
 ):
-    """Actualiza la hora del scheduler desde la UI."""
-    from apscheduler.triggers.cron import CronTrigger
+    """Actualiza los slots del pipeline scheduler desde la UI."""
+    from app.scheduler.jobs import reschedule_all_pipeline_jobs
 
-    # Validar formato básico
-    parts = daily_fetch_time.strip().split(":")
-    if len(parts) != 2:
-        raise HTTPException(status_code=400, detail="Formato inválido (HH:MM)")
-    try:
-        fetch_h, fetch_m = int(parts[0]), int(parts[1])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Formato inválido (HH:MM)")
-    if not (0 <= fetch_h <= 23 and 0 <= fetch_m <= 59):
-        raise HTTPException(status_code=400, detail="Hora o minuto fuera de rango")
+    validated_slots: list[str] = []
+    for slot in slots:
+        parts = slot.strip().split(":")
+        if len(parts) != 2:
+            raise HTTPException(status_code=400, detail=f"Formato inválido: {slot!r} (HH:MM)")
+        try:
+            h, m = int(parts[0]), int(parts[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Formato inválido: {slot!r} (HH:MM)")
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise HTTPException(status_code=400, detail=f"Hora o minuto fuera de rango: {slot!r}")
+        validated_slots.append(f"{h:02d}:{m:02d}")
 
-    def _offset(h: int, m: int, delta: int) -> tuple[int, int]:
-        t = h * 60 + m + delta * 60
-        return (t // 60) % 24, t % 60
+    if not validated_slots:
+        raise HTTPException(status_code=400, detail="Se requiere al menos un slot")
 
-    process_h, process_m = _offset(fetch_h, fetch_m, 1)
-    briefing_h, briefing_m = _offset(fetch_h, fetch_m, 2)
+    save_pipeline_slots(db, validated_slots)
+    db.commit()
+
+    s = request.app.state.settings
+    s.daily_fetch_time = validated_slots[0]
 
     scheduler = request.app.state.scheduler
-    scheduler.reschedule_job("daily_fetch", trigger=CronTrigger(hour=fetch_h, minute=fetch_m))
-    scheduler.reschedule_job("daily_process", trigger=CronTrigger(hour=process_h, minute=process_m))
-    scheduler.reschedule_job("daily_briefing", trigger=CronTrigger(hour=briefing_h, minute=briefing_m))
-
-    time_str = f"{fetch_h:02d}:{fetch_m:02d}"
-    upsert_app_setting(db, "daily_fetch_time", time_str)
-    db.commit()
-    request.app.state.settings.daily_fetch_time = time_str
+    reschedule_all_pipeline_jobs(
+        scheduler,
+        validated_slots,
+        s.session_factory if hasattr(s, "session_factory") else request.app.state.session_factory,
+        s.sources_config_path,
+        s.audio_dir,
+    )
 
     return RedirectResponse("/web/settings", status_code=303)
