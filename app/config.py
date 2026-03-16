@@ -1,15 +1,10 @@
 """Configuración central de la aplicación."""
 
-from typing import Optional
-
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
 class Settings(BaseSettings):
-    # Claude / LLM API (opcional — los modelos se configuran desde la UI)
-    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
-
     # Servidor
     host: str = Field(default="0.0.0.0", env="HOST")
     port: int = Field(default=8000, env="PORT")
