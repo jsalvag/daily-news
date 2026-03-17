@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -166,14 +166,18 @@ def web_toggle_source(
     src = get_source_by_id(db, source_id)
     if src is None:
         raise HTTPException(status_code=404)
-    toggle_source(db, source_id, not src.enabled)
+    new_state = not src.enabled
+    toggle_source(db, source_id, new_state)
     db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "enabled": new_state})
     return RedirectResponse("/web/sources", status_code=303)
 
 
 @web_router.post("/sources/{source_id}/delete")
 def web_delete_source(
     source_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Elimina una fuente desde la UI."""
@@ -181,6 +185,8 @@ def web_delete_source(
 
     delete_source(db, source_id)
     db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True})
     return RedirectResponse("/web/sources", status_code=303)
 
 
@@ -215,6 +221,7 @@ def web_create_source(
 @web_router.post("/sources/{source_id}/update")
 def web_update_source(
     source_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     name: str = Form(...),
     url: str = Form(...),
@@ -222,7 +229,7 @@ def web_update_source(
     source_type: str = Form(default="rss"),
     language: str = Form(default="es"),
     instructions: str = Form(default=""),
-    enabled: str = Form(default="on"),
+    enabled: str = Form(default=""),
 ):
     """Actualiza una fuente existente y re-extrae tags si cambiaron las instrucciones."""
     from app.storage.crud import get_source_by_id
@@ -237,6 +244,7 @@ def web_update_source(
     if new_instructions != src.instructions:
         tags = _extract_tags_if_possible(db, instructions) or tags
 
+    is_enabled = (enabled == "on")
     update_source(
         db,
         source_id=source_id,
@@ -247,9 +255,22 @@ def web_update_source(
         language=language,
         instructions=new_instructions,
         tags=tags or None,
-        enabled=(enabled == "on"),
+        enabled=is_enabled,
     )
     db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({
+            "ok": True,
+            "id": source_id,
+            "name": name,
+            "url": url,
+            "category": category,
+            "source_type": source_type,
+            "language": language,
+            "instructions": new_instructions or "",
+            "enabled": is_enabled,
+            "tags": tags or [],
+        })
     return RedirectResponse("/web/sources", status_code=303)
 
 

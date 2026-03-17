@@ -264,13 +264,13 @@
       </svg>
       <input id="search-input" type="search" class="search-input" placeholder="Buscar por nombre o URL…" oninput="applyFilters()"/>
     </div>
-    <select id="sort-select" class="custom-select" onchange="applyFilters()">
+    <select id="sort-select" class="custom-select">
       <option value="name">A → Z</option>
       <option value="category">Categoría</option>
       <option value="status">Estado</option>
     </select>
     <label class="toggle-lbl">
-      <input id="show-inactive" type="checkbox" checked onchange="applyFilters()" style="accent-color:#2563eb;"/>
+      <input id="show-inactive" type="checkbox" checked style="accent-color:#2563eb;"/>
       Inactivas
     </label>
   </div>
@@ -291,10 +291,13 @@
     {%- endif -%}
     {%- set src_topics = ([src.category] + src.tags_list) | select | list -%}
     <div class="src-card {{ 'is-disabled' if not src.enabled }}"
+         data-id="{{ src.id }}"
          data-name="{{ src.name | lower }}"
          data-url="{{ src.url | lower }}"
+         data-category="{{ (src.category or '') | lower }}"
          data-topics="{{ src_topics | join(',') | lower }}"
          data-enabled="{{ 'true' if src.enabled else 'false' }}"
+         data-color="{{ cc.v }}"
          style="animation-delay:{{ loop.index0 * 25 }}ms">
 
       <div class="card-bar" style="background:{{ cc.v if src.enabled else '#e2e8f0' }};"></div>
@@ -315,7 +318,7 @@
         <a href="{{ src.url }}" target="_blank" class="src-url" title="{{ src.url }}">{{ src.url }}</a>
 
         {%- if src.tags_list %}
-        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+        <div class="tags-row" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
           {% for tag in src.tags_list[:2] %}<span class="tag-pill">{{ tag }}</span>{% endfor %}
           {% if src.tags_list | length > 2 %}<span class="tag-more">+{{ src.tags_list | length - 2 }}</span>{% endif %}
         </div>
@@ -349,29 +352,26 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
           </svg>
         </button>
-        <form action="/web/sources/{{ src.id }}/toggle" method="post" style="line-height:0;">
-          <button type="submit" class="act-btn {{ 'act-success' if src.enabled }}"
-                  title="{{ 'Desactivar' if src.enabled else 'Activar' }}">
-            {% if src.enabled %}
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5 13l4 4L19 7"/>
-            </svg>
-            {% else %}
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="9" stroke-width="2"/>
-              <path stroke-linecap="round" stroke-width="2" d="M12 8v5"/>
-            </svg>
-            {% endif %}
-          </button>
-        </form>
-        <form action="/web/sources/{{ src.id }}/delete" method="post" style="line-height:0;"
-              onsubmit="return confirm('¿Eliminar «{{ src.name }}» y todos sus artículos?')">
-          <button type="submit" class="act-btn act-danger" title="Eliminar">
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-            </svg>
-          </button>
-        </form>
+        <button type="button" class="act-btn toggle-btn {{ 'act-success' if src.enabled }}"
+                title="{{ 'Desactivar' if src.enabled else 'Activar' }}"
+                onclick="toggleSource({{ src.id }})">
+          {% if src.enabled %}
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5 13l4 4L19 7"/>
+          </svg>
+          {% else %}
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" stroke-width="2"/>
+            <path stroke-linecap="round" stroke-width="2" d="M12 8v5"/>
+          </svg>
+          {% endif %}
+        </button>
+        <button type="button" class="act-btn act-danger" title="Eliminar"
+                onclick="deleteSource({{ src.id }}, {{ src.name | tojson }})">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
       </div>
     </div>
     {% endfor %}
@@ -520,7 +520,7 @@
   </div>
   <div class="drawer-ft">
     <button class="btn-ghost" onclick="closeDrawer()">Cancelar</button>
-    <button class="btn-dark" onclick="document.getElementById('edit-form').submit()">Guardar cambios</button>
+    <button id="save-edit-btn" class="btn-dark" onclick="saveEditedSource()">Guardar cambios</button>
   </div>
 </div>
 
@@ -633,6 +633,272 @@
     const stA = document.getElementById('stat-active');
     if (stT) stT.textContent = vis < total ? `${vis} de ${total}` : total;
     if (stA) stA.textContent = active;
+  }
+
+  // ── Persistent UI state ─────────────────────────────────────────────────────
+  (function restoreUIState() {
+    const chk = document.getElementById('show-inactive');
+    const saved = localStorage.getItem('sources_show_inactive');
+    if (saved !== null) chk.checked = (saved === 'true');
+
+    const sel = document.getElementById('sort-select');
+    const savedSort = localStorage.getItem('sources_sort');
+    if (savedSort) sel.value = savedSort;
+
+    chk.addEventListener('change', () => {
+      localStorage.setItem('sources_show_inactive', chk.checked);
+      applyFilters();
+    });
+    sel.addEventListener('change', () => {
+      localStorage.setItem('sources_sort', sel.value);
+      applyFilters();
+    });
+
+    // Run filters once on load to apply restored state
+    applyFilters();
+  })();
+
+  // ── AJAX: Toggle ────────────────────────────────────────────────────────────
+  async function toggleSource(id) {
+    const card = document.querySelector(`.src-card[data-id="${id}"]`);
+    if (!card) return;
+
+    try {
+      const resp = await fetch(`/web/sources/${id}/toggle`, {
+        method: 'POST',
+        headers: { 'x-requested-with': 'fetch' }
+      });
+      if (!resp.ok) throw new Error('server error');
+      const data = await resp.json();
+      const enabled = data.enabled;
+      const color   = card.dataset.color;
+
+      // Card state
+      card.dataset.enabled = enabled ? 'true' : 'false';
+      card.classList.toggle('is-disabled', !enabled);
+
+      // Accent bar
+      card.querySelector('.card-bar').style.background = enabled ? color : '#e2e8f0';
+
+      // Toggle button icon + class
+      const btn = card.querySelector('.toggle-btn');
+      btn.classList.toggle('act-success', enabled);
+      btn.title = enabled ? 'Desactivar' : 'Activar';
+      const checkSvg = `<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5 13l4 4L19 7"/></svg>`;
+      const circleSvg = `<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 8v5"/></svg>`;
+      btn.innerHTML = enabled ? checkSvg : circleSvg;
+
+      // "inactiva" badge
+      _syncInactivaBadge(card, enabled);
+
+      // Sync data-enabled on edit button
+      const editBtn = card.querySelector('[data-enabled]');
+      if (editBtn) editBtn.dataset.enabled = enabled ? 'true' : 'false';
+
+      applyFilters();
+    } catch (e) {
+      console.error(e);
+      alert('Error al cambiar el estado de la fuente.');
+    }
+  }
+
+  // ── AJAX: Delete ────────────────────────────────────────────────────────────
+  async function deleteSource(id, name) {
+    if (!confirm(`¿Eliminar «${name}» y todos sus artículos?`)) return;
+
+    const card = document.querySelector(`.src-card[data-id="${id}"]`);
+    if (!card) return;
+
+    try {
+      const resp = await fetch(`/web/sources/${id}/delete`, {
+        method: 'POST',
+        headers: { 'x-requested-with': 'fetch' }
+      });
+      if (!resp.ok) throw new Error('server error');
+
+      // Animate out: fade + slide right, then collapse height
+      const h = card.getBoundingClientRect().height;
+      card.style.transition = 'opacity 0.22s ease, transform 0.22s ease';
+      card.style.opacity    = '0';
+      card.style.transform  = 'translateX(18px)';
+
+      setTimeout(() => {
+        card.style.transition    = 'max-height 0.28s ease, margin 0.28s ease, padding 0.28s ease, border 0.28s ease';
+        card.style.overflow      = 'hidden';
+        card.style.maxHeight     = h + 'px';
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          card.style.maxHeight     = '0';
+          card.style.marginBottom  = '0';
+        }));
+      }, 220);
+
+      setTimeout(() => { card.remove(); applyFilters(); }, 530);
+
+    } catch (e) {
+      alert('Error al eliminar la fuente.');
+    }
+  }
+
+  // ── AJAX: Save edit ─────────────────────────────────────────────────────────
+  async function saveEditedSource() {
+    const form  = document.getElementById('edit-form');
+    const match = form.action.match(/\/sources\/(\d+)\/update/);
+    if (!match) return;
+    const id = match[1];
+
+    const saveBtn = document.getElementById('save-edit-btn');
+    saveBtn.textContent = 'Guardando…';
+    saveBtn.disabled = true;
+
+    try {
+      const resp = await fetch(form.action, {
+        method:  'POST',
+        headers: { 'x-requested-with': 'fetch' },
+        body:    new FormData(form),
+      });
+      if (!resp.ok) throw new Error('server error');
+      const data = await resp.json();
+
+      const card = document.querySelector(`.src-card[data-id="${id}"]`);
+      if (card) _updateCardDOM(card, data);
+
+      closeDrawer();
+      applyFilters();
+    } catch (e) {
+      alert('Error al guardar los cambios.');
+    } finally {
+      saveBtn.textContent = 'Guardar cambios';
+      saveBtn.disabled = false;
+    }
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function _catColor(cat) {
+    const cl = (cat || '').toLowerCase();
+    if (/tecnolog|tech/.test(cl))          return '#6366f1';
+    if (/pol[ií]t/.test(cl))              return '#ef4444';
+    if (/deport|sport/.test(cl))           return '#10b981';
+    if (/cienc|scien/.test(cl))            return '#06b6d4';
+    if (/econom|negoc|financ/.test(cl))    return '#f59e0b';
+    if (/salud|health/.test(cl))           return '#ec4899';
+    if (/cultur|arte/.test(cl))            return '#8b5cf6';
+    return '#2563eb';
+  }
+
+  function _syncInactivaBadge(card, enabled) {
+    const flexRow  = card.querySelector('.card-body .flex');
+    let   offBadge = card.querySelector('.badge-off');
+    if (!enabled && !offBadge) {
+      offBadge = document.createElement('span');
+      offBadge.className = 'badge-mono badge-off';
+      offBadge.textContent = 'inactiva';
+      flexRow.appendChild(offBadge);
+    } else if (enabled && offBadge) {
+      offBadge.remove();
+    }
+  }
+
+  function _updateCardDOM(card, d) {
+    const color = _catColor(d.category);
+    card.dataset.color    = color;
+    card.dataset.name     = d.name.toLowerCase();
+    card.dataset.url      = d.url.toLowerCase();
+    card.dataset.category = (d.category || '').toLowerCase();
+    card.dataset.enabled  = d.enabled ? 'true' : 'false';
+    const topics = [d.category, ...(d.tags || [])].filter(Boolean).map(t => t.toLowerCase());
+    card.dataset.topics = topics.join(',');
+
+    card.classList.toggle('is-disabled', !d.enabled);
+    card.querySelector('.card-bar').style.background = d.enabled ? color : '#e2e8f0';
+
+    // Name
+    card.querySelector('.src-name').textContent = d.name;
+
+    // URL
+    const urlEl = card.querySelector('.src-url');
+    urlEl.textContent = d.url;
+    urlEl.href  = d.url;
+    urlEl.title = d.url;
+
+    // Category chip
+    let chip = card.querySelector('.cat-chip');
+    if (d.category) {
+      if (!chip) {
+        chip = document.createElement('span');
+        chip.className = 'cat-chip';
+        card.querySelector('.src-name').insertAdjacentElement('afterend', chip);
+      }
+      chip.textContent          = d.category;
+      chip.style.background     = color + '18';
+      chip.style.color          = color;
+    } else if (chip) { chip.remove(); }
+
+    // source_type badge (first non-lang, non-off badge-mono)
+    const typeBadge = card.querySelector('.badge-mono:not(.badge-lang):not(.badge-off)');
+    if (typeBadge) typeBadge.textContent = d.source_type;
+
+    // language badge
+    const langBadge = card.querySelector('.badge-lang');
+    if (langBadge) langBadge.textContent = d.language;
+
+    // "inactiva" badge
+    _syncInactivaBadge(card, d.enabled);
+
+    // Tags row
+    const cardBody = card.querySelector('.card-body');
+    let tagsRow = cardBody.querySelector('.tags-row');
+    if (d.tags && d.tags.length) {
+      if (!tagsRow) {
+        tagsRow = document.createElement('div');
+        tagsRow.className  = 'tags-row';
+        tagsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;';
+        card.querySelector('.src-url').insertAdjacentElement('afterend', tagsRow);
+      }
+      while (tagsRow.firstChild) tagsRow.removeChild(tagsRow.firstChild);
+      d.tags.slice(0, 2).forEach(tag => {
+        const sp = document.createElement('span');
+        sp.className   = 'tag-pill';
+        sp.textContent = tag;
+        tagsRow.appendChild(sp);
+      });
+      if (d.tags.length > 2) {
+        const more = document.createElement('span');
+        more.className   = 'tag-more';
+        more.textContent = '+' + (d.tags.length - 2);
+        tagsRow.appendChild(more);
+      }
+    } else if (tagsRow) { tagsRow.remove(); }
+
+    // Instructions hint
+    let hintEl = cardBody.querySelector('.src-hint');
+    if (d.instructions) {
+      if (!hintEl) {
+        hintEl = document.createElement('div');
+        hintEl.className = 'src-hint';
+        // Insert after tags row if present, else after URL
+        const insertAnchor = cardBody.querySelector('.tags-row') || card.querySelector('.src-url');
+        insertAnchor.insertAdjacentElement('afterend', hintEl);
+      }
+      while (hintEl.firstChild) hintEl.removeChild(hintEl.firstChild);
+      // SVG icon (static markup, no user data)
+      const iconWrap = document.createElement('span');
+      iconWrap.innerHTML = '<svg style="display:inline;vertical-align:-2px;margin-right:3px;" width="11" height="11" fill="none" stroke="#94a3b8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/></svg>';
+      hintEl.appendChild(iconWrap);
+      hintEl.appendChild(document.createTextNode(d.instructions));
+    } else if (hintEl) { hintEl.remove(); }
+
+    // Sync edit button datasets
+    const editBtn = card.querySelector('button[data-id]');
+    if (editBtn) {
+      editBtn.dataset.name         = d.name;
+      editBtn.dataset.url          = d.url;
+      editBtn.dataset.category     = d.category || '';
+      editBtn.dataset.sourceType   = d.source_type;
+      editBtn.dataset.language     = d.language;
+      editBtn.dataset.instructions = d.instructions || '';
+      editBtn.dataset.tags         = (d.tags || []).join(',');
+      editBtn.dataset.enabled      = d.enabled ? 'true' : 'false';
+    }
   }
 </script>
 
