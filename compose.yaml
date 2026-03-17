@@ -21,7 +21,7 @@ services:
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     volumes:
-      - db_data:/app/data           # SQLite persistente entre reinicios
+      - db_data:/app/data           # SQLite + audio persistentes entre reinicios
       - ./config:/app/config:ro     # sources.yaml editable sin rebuild
     env_file:
       - path: .env

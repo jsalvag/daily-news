@@ -88,8 +88,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copiar código con ownership correcto desde el principio
 COPY --chown=app:app . .
 
-# Carpeta de datos persistente con permisos correctos
-RUN mkdir -p /app/data && chown app:app /app/data
+# Carpeta de datos persistente; audio va dentro del named volume donde app tiene permisos
+RUN mkdir -p /app/data /app/data/audio && chown -R app:app /app/data
 
 USER app
 

@@ -33,6 +33,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
+from app.events import publish
 from app.fetcher.rss import fetch_feeds_concurrently
 from app.fetcher.sources_loader import load_and_sync
 from app.processor.llm import process_pending_articles
@@ -42,6 +43,7 @@ from app.storage.crud import (
     get_articles_for_date,
     get_model_config,
     get_tts_config,
+    get_worker_system_prompt,
     mark_source_fetched,
     save_articles,
     update_briefing_audio,
@@ -92,10 +94,11 @@ def generate_daily_briefing(
     # ── Sección de voz (Google Home) ────────────────────────────────────────
     voice_articles = articles[:_MAX_VOICE_ARTICLES]
     headlines_lines = [
-        f"{i + 1}. {a.ai_headline}"
+        # Punto final en cada ítem → el TTS hace pausa natural entre oraciones
+        f"{i + 1}. {a.ai_headline.rstrip('.')}."
         for i, a in enumerate(voice_articles)
     ]
-    headlines_text = "  ".join(headlines_lines)   # doble espacio → pausa natural en TTS
+    headlines_text = " ".join(headlines_lines)
 
     # ── Sección completa (iPhone) ────────────────────────────────────────────
     full_lines: list[str] = []
@@ -132,6 +135,7 @@ def make_fetch_job(
 
     def _job() -> None:
         logger.info("Job fetch: iniciando.")
+        publish("job_start", {"job": "fetch"})
         session = session_factory()
         try:
             # 1. Sincronizar fuentes del YAML con la BD (por si el usuario editó el YAML)
@@ -145,6 +149,7 @@ def make_fetch_job(
             sources = get_all_sources(session, enabled_only=True)
             if not sources:
                 logger.warning("No hay fuentes habilitadas — fetch cancelado.")
+                publish("job_done", {"job": "fetch", "inserted": 0})
                 return
 
             urls = [s.url for s in sources]
@@ -163,13 +168,21 @@ def make_fetch_job(
                 if inserted > 0:
                     mark_source_fetched(session, src.id)
                 total_inserted += inserted
+                publish("fetch_progress", {
+                    "name": getattr(src, "name", None) or url,
+                    "url": url,
+                    "count": len(fetched_articles),
+                    "inserted": inserted,
+                })
 
             session.commit()
             logger.info("Job fetch: %d artículos nuevos insertados.", total_inserted)
+            publish("job_done", {"job": "fetch", "inserted": total_inserted})
 
         except Exception as exc:
             logger.exception("Job fetch: error inesperado: %s", exc)
             session.rollback()
+            publish("job_error", {"job": "fetch", "error": str(exc)})
         finally:
             session.close()
 
@@ -201,6 +214,7 @@ def make_process_job(
             "Job process: iniciando (batch_size=%d, delay=%ds).",
             batch_size, int(batch_delay_seconds),
         )
+        publish("job_start", {"job": "process"})
         session = session_factory()
         try:
             cfg = get_model_config(session, "worker")
@@ -209,6 +223,7 @@ def make_process_job(
                     "No hay modelo 'worker' configurado en la BD. "
                     "Configura uno en /web/models antes de procesar artículos."
                 )
+                publish("job_error", {"job": "process", "error": "No hay modelo 'worker' configurado."})
                 return
 
             total_processed = 0
@@ -225,12 +240,29 @@ def make_process_job(
                     "Job process: batch %d — %d artículos pendientes.", batch_num, pending
                 )
 
+                # Contador acumulado al inicio del batch (para calcular pendientes en callback)
+                _batch_start_pending = pending
+
+                def _on_article_done(partial_result, _pending=_batch_start_pending):
+                    done_so_far = partial_result.processed + partial_result.skipped
+                    est_pending = max(0, _pending - done_so_far + (total_processed + total_skipped - (total_processed + total_skipped)))
+                    # Emitir progreso con totales acumulados + parciales de este batch
+                    publish("process_progress", {
+                        "batch": batch_num,
+                        "processed": total_processed + partial_result.processed,
+                        "skipped": total_skipped + partial_result.skipped,
+                        "pending": max(0, _pending - done_so_far),
+                    })
+
+                custom_prompt = get_worker_system_prompt(session)
                 result = process_pending_articles(
                     session,
                     model=cfg.litellm_model,
                     api_key=cfg.api_key,
                     base_url=cfg.base_url,
                     limit=batch_size,
+                    system_prompt=custom_prompt,
+                    on_article_done=_on_article_done,
                 )
                 session.commit()
                 total_processed += result.processed
@@ -249,10 +281,12 @@ def make_process_job(
                 "Job process: cola vaciada. %d procesados, %d omitidos en %d batches.",
                 total_processed, total_skipped, batch_num,
             )
+            publish("job_done", {"job": "process", "processed": total_processed, "skipped": total_skipped})
 
         except Exception as exc:
             logger.exception("Job process: error inesperado: %s", exc)
             session.rollback()
+            publish("job_error", {"job": "process", "error": str(exc)})
         finally:
             session.close()
 
@@ -272,6 +306,7 @@ def make_briefing_job(
     """
     def _job() -> None:
         logger.info("Job briefing: iniciando.")
+        publish("job_start", {"job": "briefing"})
         session = session_factory()
         try:
             run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -279,9 +314,11 @@ def make_briefing_job(
             session.commit()
             if not briefing:
                 logger.warning("Job briefing: no se generó ningún briefing.")
+                publish("job_error", {"job": "briefing", "error": "Sin artículos procesados para generar el briefing."})
                 return
 
             logger.info("Job briefing: briefing %s (run_at=%s) generado.", briefing.date, briefing.run_at)
+            publish("job_done", {"job": "briefing", "date": str(briefing.date)})
 
             # ── TTS: generar audio si hay proveedor configurado ───────────────
             try:
@@ -332,6 +369,7 @@ def make_briefing_job(
         except Exception as exc:
             logger.exception("Job briefing: error inesperado: %s", exc)
             session.rollback()
+            publish("job_error", {"job": "briefing", "error": str(exc)})
         finally:
             session.close()
 

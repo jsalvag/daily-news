@@ -32,15 +32,48 @@ litellm.suppress_debug_info = True
 # Máximo de caracteres del contenido del artículo enviados al LLM
 MAX_CONTENT_CHARS = 3_000
 
-_SYSTEM_PROMPT = """Eres un editor de noticias experto. Analizas artículos de noticias \
-y produces resúmenes concisos en español para un boletín diario de noticias.
+DEFAULT_SYSTEM_PROMPT = """Eres un editor de noticias experto. Analizas artículos en CUALQUIER idioma y produces titular y resumen SIEMPRE en español, optimizados para ser leídos en voz alta por un sintetizador de voz (TTS).
 
-Para cada artículo debes:
-1. Crear un titular corto y atractivo (máximo 15 palabras) en español
-2. Escribir un resumen de 1-2 oraciones en español
-3. Asignar una puntuación de relevancia de 0.0 a 1.0 (mayor = más importante)
+REGLAS ABSOLUTAS — sin excepciones, sin importar el idioma del artículo original:
 
-Responde SOLO en formato JSON válido con la estructura exacta especificada."""
+1. IDIOMA — SIEMPRE español. NUNCA inglés ni otro idioma en el output.
+   Si el artículo está en inglés, francés, portugués u otro idioma, tradúcelo.
+   MAL: "Stock market falls sharply amid rate fears"
+   BIEN: "La bolsa cae con fuerza ante el temor a nuevas subidas de tasas."
+
+2. NÚMEROS — SIEMPRE en palabras. NUNCA dígitos, ni siquiera en marcadores.
+   MAL: 5-2 | $12,100 | 3.5% | 150,000 | 2024
+   BIEN: "cinco a dos" | "doce mil cien dólares" | "tres coma cinco por ciento" | "ciento cincuenta mil" | "dos mil veinticuatro"
+   Marcadores deportivos: usar "X a Y" → "cinco a dos", "tres a uno".
+
+3. SÍMBOLOS — Expándelos siempre a palabras.
+   $ → "dólares" o "pesos" (según contexto)
+   % → "por ciento"
+   & → "y"
+   vs / vs. → "versus" o "contra"
+   km → "kilómetros" | km/h → "kilómetros por hora"
+
+4. ABREVIATURAS Y SIGLAS — Expándelas siempre, salvo ONU, FIFA, NASA, OTAN.
+   MAL: DT | CEO | IPO | ETF | USD | EE.UU. | USA | PM | AM
+   BIEN: "director técnico" | "director ejecutivo" | "oferta pública inicial" | "dólares" | "Estados Unidos"
+
+5. PUNTUACIÓN — Oraciones completas con punto final. Sin guiones, paréntesis ni corchetes.
+   MAL: "San Lorenzo 5-2 Defensa y Justicia"
+   BIEN: "San Lorenzo derrotó a Defensa y Justicia cinco a dos."
+
+6. TITULAR — Máximo quince palabras. Sujeto + predicado obligatorios.
+   Si el titular supera quince palabras, recórtalo conservando lo esencial.
+
+7. RESUMEN — Una o dos oraciones cortas, cada una con punto final.
+
+Antes de escribir el JSON, verificá mentalmente:
+- ¿Está todo en español? ✓
+- ¿Hay algún dígito? → convertir a palabras
+- ¿Hay algún símbolo ($, %, &, -) o sigla no universal? → expandir
+- ¿El titular tiene más de quince palabras? → recortar
+
+Responde SOLO en JSON válido con esta estructura exacta:
+{"headline": "...", "summary": "...", "relevance_score": 0.0}"""
 
 
 # ─── Modelos de datos ────────────────────────────────────────────────────────
@@ -86,15 +119,19 @@ def analyze_article(
     model: str,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    source_instructions: Optional[str] = None,
 ) -> Optional[ArticleAnalysis]:
     """
     Analiza un artículo individual con LiteLLM.
 
     Args:
-        article:  Objeto Article de la BD.
-        model:    String de modelo LiteLLM: 'provider/model_id'.
-        api_key:  API key del proveedor (None para Ollama u otros sin auth).
-        base_url: URL base para proveedores locales (Ollama, LMStudio).
+        article:             Objeto Article de la BD.
+        model:               String de modelo LiteLLM: 'provider/model_id'.
+        api_key:             API key del proveedor (None para Ollama u otros sin auth).
+        base_url:            URL base para proveedores locales (Ollama, LMStudio).
+        system_prompt:       Prompt del sistema personalizado. Si es None, usa DEFAULT_SYSTEM_PROMPT.
+        source_instructions: Instrucciones específicas de la fuente para guiar el análisis.
 
     Returns:
         ArticleAnalysis si el análisis fue exitoso, None en caso contrario.
@@ -104,10 +141,18 @@ def analyze_article(
         logger.debug("Artículo sin contenido, omitiendo: id=%s", article.id)
         return None
 
+    prompt = system_prompt if system_prompt and system_prompt.strip() else DEFAULT_SYSTEM_PROMPT
+    if source_instructions and source_instructions.strip():
+        prompt = (
+            prompt
+            + "\n\nINSTRUCCIONES ESPECÍFICAS DE ESTA FUENTE:\n"
+            + source_instructions.strip()
+        )
+
     kwargs: dict = {
         "model": model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": user_content},
         ],
         "response_format": ArticleAnalysis,
@@ -135,6 +180,8 @@ def process_pending_articles(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     limit: int = 50,
+    system_prompt: Optional[str] = None,
+    on_article_done: Optional[object] = None,
 ) -> ProcessResult:
     """
     Procesa todos los artículos pendientes con LiteLLM.
@@ -152,13 +199,24 @@ def process_pending_articles(
     Returns:
         ProcessResult con contadores de procesados/omitidos/errores.
     """
-    from app.storage.crud import get_unprocessed_articles, update_article_ai
+    from app.storage.crud import get_source_by_id, get_unprocessed_articles, update_article_ai
 
     articles = get_unprocessed_articles(session, limit=limit)
     result = ProcessResult()
 
+    # Pre-cargar instrucciones por fuente para no repetir queries en el loop
+    _source_instructions: dict[int, str | None] = {}
+    for _a in articles:
+        if _a.source_id not in _source_instructions:
+            _src = get_source_by_id(session, _a.source_id)
+            _source_instructions[_a.source_id] = _src.instructions if _src else None
+
     for article in articles:
-        analysis = analyze_article(article, model=model, api_key=api_key, base_url=base_url)
+        analysis = analyze_article(
+            article, model=model, api_key=api_key, base_url=base_url,
+            system_prompt=system_prompt,
+            source_instructions=_source_instructions.get(article.source_id),
+        )
 
         if analysis is not None:
             update_article_ai(
@@ -179,6 +237,12 @@ def process_pending_articles(
                 relevance_score=0.0,
             )
             result.skipped += 1
+
+        if on_article_done is not None:
+            try:
+                on_article_done(result)
+            except Exception:
+                pass
 
     logger.info("Procesamiento LLM completado: %s", result)
     return result

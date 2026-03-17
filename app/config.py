@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     )
 
     # Directorio para archivos de audio TTS generados
-    # En Docker comparte el mismo volumen que la BD (data/)
-    audio_dir: str = Field(default="data/audio", env="AUDIO_DIR")
+    # Ruta absoluta para evitar ambigüedad con el directorio de trabajo
+    audio_dir: str = Field(default="/app/data/audio", env="AUDIO_DIR")
 
     class Config:
         env_file = ".env"
