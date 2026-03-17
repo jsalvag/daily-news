@@ -55,8 +55,8 @@ class Article(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
     guid = Column(String(1000), nullable=True)  # identificador único del feed
 
-    # Procesamiento por Claude
-    ai_summary = Column(Text, nullable=True)    # resumen generado por Claude
+    # Procesamiento por LLM
+    ai_summary = Column(Text, nullable=True)    # resumen generado por LLM
     ai_headline = Column(String(300), nullable=True)  # titular corto
     relevance_score = Column(Float, nullable=True)    # 0.0 - 1.0
     processed = Column(Boolean, default=False)
@@ -68,7 +68,7 @@ class Article(Base):
 
 
 class DailyBriefing(Base):
-    """Compilado diario generado por Claude."""
+    """Compilado diario generado por el LLM."""
 
     __tablename__ = "daily_briefings"
 
@@ -81,6 +81,42 @@ class DailyBriefing(Base):
 
     def __repr__(self) -> str:
         return f"<DailyBriefing date={self.date!r}>"
+
+
+class AIModelConfig(Base):
+    """Configuración de modelo de IA para un rol específico (worker o editor)."""
+
+    __tablename__ = "ai_model_configs"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    role       = Column(String(20), nullable=False, unique=True)   # "worker" | "editor"
+    provider   = Column(String(50), nullable=False)                # "groq", "anthropic", "openai", "ollama"
+    model_id   = Column(String(200), nullable=False)               # "llama3-70b-8192", "claude-opus-4-6"
+    api_key    = Column(String(500), nullable=True)                # None para proveedores sin auth (Ollama)
+    base_url   = Column(String(500), nullable=True)                # URL base para Ollama / LMStudio
+    is_active  = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def litellm_model(self) -> str:
+        """Retorna el string de modelo en formato LiteLLM: 'provider/model_id'."""
+        return f"{self.provider}/{self.model_id}"
+
+    def __repr__(self) -> str:
+        return f"<AIModelConfig role={self.role!r} model={self.litellm_model!r}>"
+
+
+class AppSetting(Base):
+    """Configuración persistente de la aplicación (clave/valor)."""
+
+    __tablename__ = "app_settings"
+
+    key        = Column(String(100), primary_key=True)
+    value      = Column(String(500), nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<AppSetting {self.key!r}={self.value!r}>"
 
 
 # ─── Helpers de base de datos ────────────────────────────────────────────────

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Ajustes{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-900 mb-2">Ajustes</h1>
+<p class="text-sm text-gray-500 mb-8">
+  Configuración general de la aplicación. Los cambios de hora del scheduler se aplican
+  inmediatamente sin necesidad de reiniciar.
+</p>
+
+<!-- Scheduler -->
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclo diario automático</h2>
+  <p class="text-xs text-gray-500 mb-4">
+    Hora UTC a la que se ejecuta el ciclo fetch → proceso IA → briefing.
+    El proceso IA se lanza 1 h después y el briefing 2 h después.
+  </p>
+
+  <form action="/web/settings/scheduler" method="post" class="flex items-end gap-4">
+    <div>
+      <label class="block text-xs font-medium text-gray-700 mb-1">
+        Hora del fetch diario <span class="text-red-500">*</span>
+        <span class="text-gray-400 font-normal">(UTC, formato HH:MM)</span>
+      </label>
+      <input type="text" name="daily_fetch_time" required
+             value="{{ daily_fetch_time }}"
+             placeholder="06:00"
+             pattern="^([01]?\d|2[0-3]):[0-5]\d$"
+             class="border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28" />
+    </div>
+    <button type="submit"
+            class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+      Guardar
+    </button>
+  </form>
+
+  <!-- Timeline visual -->
+  <div class="mt-5 flex items-center gap-0 text-xs text-gray-500">
+    {% set parts = daily_fetch_time.split(':') %}
+    {% set h = parts[0] | int %}
+    {% set m = parts[1] | int %}
+    {% set proc_h = ((h * 60 + m + 60) // 60) % 24 %}
+    {% set proc_m = (h * 60 + m + 60) % 60 %}
+    {% set brief_h = ((h * 60 + m + 120) // 60) % 24 %}
+    {% set brief_m = (h * 60 + m + 120) % 60 %}
+
+    <div class="flex flex-col items-center">
+      <div class="w-3 h-3 bg-blue-500 rounded-full mb-1"></div>
+      <span class="font-semibold text-blue-600">{{ "%02d:%02d" | format(h, m) }}</span>
+      <span class="text-gray-400 mt-0.5">Fetch RSS</span>
+    </div>
+    <div class="flex-1 border-t border-dashed border-gray-300 mx-2 mb-4"></div>
+    <div class="flex flex-col items-center">
+      <div class="w-3 h-3 bg-purple-500 rounded-full mb-1"></div>
+      <span class="font-semibold text-purple-600">{{ "%02d:%02d" | format(proc_h, proc_m) }}</span>
+      <span class="text-gray-400 mt-0.5">Proceso IA</span>
+    </div>
+    <div class="flex-1 border-t border-dashed border-gray-300 mx-2 mb-4"></div>
+    <div class="flex flex-col items-center">
+      <div class="w-3 h-3 bg-green-500 rounded-full mb-1"></div>
+      <span class="font-semibold text-green-600">{{ "%02d:%02d" | format(brief_h, brief_m) }}</span>
+      <span class="text-gray-400 mt-0.5">Briefing</span>
+    </div>
+  </div>
+</div>
+
+<!-- Feed info (read-only) -->
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <h2 class="text-base font-semibold text-gray-900 mb-1">RSS feed</h2>
+  <p class="text-xs text-gray-500 mb-4">
+    Configuración del feed RSS de salida. Para cambiar estos valores edita el archivo
+    <code class="bg-gray-100 px-1 rounded">.env</code> y reinicia la aplicación.
+  </p>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+    <div>
+      <span class="block text-xs font-medium text-gray-500 mb-1">Título del feed</span>
+      <span class="text-gray-800">{{ feed_title }}</span>
+    </div>
+    <div>
+      <span class="block text-xs font-medium text-gray-500 mb-1">URL base</span>
+      <a href="{{ feed_base_url }}" target="_blank" class="text-blue-600 hover:underline break-all">
+        {{ feed_base_url }}
+      </a>
+    </div>
+    <div class="md:col-span-2">
+      <span class="block text-xs font-medium text-gray-500 mb-1">Descripción</span>
+      <span class="text-gray-800">{{ feed_description }}</span>
+    </div>
+  </div>
+  <div class="mt-4">
+    <a href="/feed.xml" target="_blank"
+       class="inline-flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700 font-medium">
+      📡 Ver feed.xml
+    </a>
+  </div>
+</div>
+
+<!-- API / MCP info -->
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <h2 class="text-base font-semibold text-gray-900 mb-1">API &amp; MCP</h2>
+  <p class="text-xs text-gray-500 mb-4">
+    Todos los endpoints REST también están expuestos como herramientas MCP en
+    <code class="bg-gray-100 px-1 rounded">/mcp</code>.
+  </p>
+  <div class="flex flex-wrap gap-3">
+    <a href="/docs" target="_blank"
+       class="text-sm text-blue-600 hover:underline">📖 Swagger UI</a>
+    <a href="/redoc" target="_blank"
+       class="text-sm text-blue-600 hover:underline">📄 ReDoc</a>
+    <a href="/mcp" target="_blank"
+       class="text-sm text-blue-600 hover:underline">🔌 MCP endpoint</a>
+  </div>
+</div>
+
+{% endblock %}

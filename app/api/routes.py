@@ -7,7 +7,7 @@ en main.py y el testeo independiente.
 Convenciones:
   - get_db: dependency que yield-ea una sesión por request.
   - request.app.state.{...}: acceso a objetos compartidos (scheduler,
-    anthropic_client, settings) inicializados en el lifespan de main.py.
+    settings) inicializados en el lifespan de main.py.
   - BackgroundTasks: para jobs que pueden tardar (fetch, process).
     El endpoint responde 202 Accepted inmediatamente.
 """
@@ -21,6 +21,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    AIModelConfigRequest,
+    AIModelConfigResponse,
     ArticleResponse,
     BriefingResponse,
     JobStatusResponse,
@@ -38,13 +40,18 @@ from app.scheduler.jobs import (
     make_process_job,
 )
 from app.storage.crud import (
+    delete_model_config,
     delete_source,
+    get_all_model_configs,
     get_all_sources,
     get_articles_for_date,
     get_briefing_by_date,
     get_latest_briefing,
+    get_model_config,
     get_source_by_id,
     toggle_source,
+    upsert_app_setting,
+    upsert_model_config,
 )
 
 router = APIRouter()
@@ -155,7 +162,7 @@ def list_articles(
     """
     Lista artículos del día.
     - `date_str` (YYYY-MM-DD): fecha a consultar; por defecto, hoy.
-    - `processed_only`: si true, solo devuelve artículos procesados por Claude.
+    - `processed_only`: si true, solo devuelve artículos procesados por LLM.
     """
     if date_str is not None:
         try:
@@ -245,8 +252,7 @@ def trigger_process(request: Request, background_tasks: BackgroundTasks):
     Responde 202 inmediatamente; el trabajo corre en background.
     """
     session_factory = request.app.state.session_factory
-    anthropic_client = request.app.state.anthropic_client
-    job = make_process_job(session_factory, anthropic_client)
+    job = make_process_job(session_factory)
     background_tasks.add_task(job)
     return JobStatusResponse(
         status="started", message="Procesamiento IA iniciado en background."
@@ -292,7 +298,11 @@ def get_settings(request: Request):
     response_model=SettingsResponse,
     tags=["settings"],
 )
-def update_scheduler_time(request: Request, body: SchedulerUpdateRequest):
+def update_scheduler_time(
+    request: Request,
+    body: SchedulerUpdateRequest,
+    db: Session = Depends(get_db),
+):
     """
     Actualiza la hora del ciclo diario fetch → process → briefing.
 
@@ -301,8 +311,8 @@ def update_scheduler_time(request: Request, body: SchedulerUpdateRequest):
       - fetch_time + 1h  → procesamiento IA
       - fetch_time + 2h  → generación del briefing
 
-    El cambio es en memoria. Para persistirlo entre reinicios,
-    actualiza DAILY_FETCH_TIME en el archivo .env.
+    El cambio se persiste en la BD (app_settings) y se aplica
+    en memoria para que surta efecto sin reiniciar la aplicación.
     """
     from apscheduler.triggers.cron import CronTrigger
 
@@ -330,7 +340,9 @@ def update_scheduler_time(request: Request, body: SchedulerUpdateRequest):
         "daily_briefing", trigger=CronTrigger(hour=briefing_h, minute=briefing_m)
     )
 
-    # Actualizar settings en memoria
+    # Persistir en BD y actualizar settings en memoria
+    upsert_app_setting(db, "daily_fetch_time", body.daily_fetch_time)
+    db.commit()
     settings.daily_fetch_time = body.daily_fetch_time
 
     return SettingsResponse(
@@ -340,3 +352,74 @@ def update_scheduler_time(request: Request, body: SchedulerUpdateRequest):
         feed_base_url=settings.feed_base_url,
         sources_config_path=settings.sources_config_path,
     )
+
+
+# ─── AI Model Config ──────────────────────────────────────────────────────────
+
+@router.get(
+    "/models",
+    response_model=list[AIModelConfigResponse],
+    tags=["models"],
+)
+def list_model_configs(db: Session = Depends(get_db)):
+    """Lista todas las configuraciones de modelos de IA."""
+    return get_all_model_configs(db)
+
+
+@router.get(
+    "/models/{role}",
+    response_model=AIModelConfigResponse,
+    tags=["models"],
+)
+def get_model_config_endpoint(role: str, db: Session = Depends(get_db)):
+    """Obtiene la configuración de modelo para un rol específico."""
+    cfg = get_model_config(db, role)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"No hay configuración para el rol '{role}'.")
+    return cfg
+
+
+@router.put(
+    "/models/{role}",
+    response_model=AIModelConfigResponse,
+    tags=["models"],
+)
+def upsert_model_config_endpoint(
+    role: str,
+    body: AIModelConfigRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Crea o actualiza la configuración de modelo para un rol.
+
+    Roles válidos: 'worker' (análisis artículo a artículo), 'editor' (síntesis diaria).
+    """
+    if role not in ("worker", "editor"):
+        raise HTTPException(
+            status_code=400,
+            detail="Rol inválido. Use 'worker' o 'editor'.",
+        )
+    cfg = upsert_model_config(
+        db,
+        role=role,
+        provider=body.provider,
+        model_id=body.model_id,
+        api_key=body.api_key,
+        base_url=body.base_url,
+    )
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+@router.delete(
+    "/models/{role}",
+    status_code=204,
+    tags=["models"],
+)
+def delete_model_config_endpoint(role: str, db: Session = Depends(get_db)):
+    """Elimina la configuración de modelo para un rol."""
+    ok = delete_model_config(db, role)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"No hay configuración para el rol '{role}'.")
+    db.commit()

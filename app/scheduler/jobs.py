@@ -13,7 +13,7 @@ Estructura:
   - create_scheduler(): ensambla el BackgroundScheduler con los tres
     jobs diarios y lo retorna listo para ser iniciado.
 
-Horario por defecto (configurable via DAILY_FETCH_TIME en .env):
+Horario por defecto (configurable via DAILY_FETCH_TIME en .env o BD):
   - fetch_time         → fetch de todos los feeds
   - fetch_time + 1h   → procesamiento IA
   - fetch_time + 2h   → generación del briefing
@@ -28,17 +28,17 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-import anthropic
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
 from app.fetcher.rss import fetch_feeds_concurrently
 from app.fetcher.sources_loader import load_and_sync
-from app.processor.claude import process_pending_articles
+from app.processor.llm import process_pending_articles
 from app.storage.crud import (
     get_all_sources,
     get_articles_for_date,
+    get_model_config,
     mark_source_fetched,
     save_articles,
     upsert_briefing,
@@ -169,17 +169,33 @@ def make_fetch_job(
 
 def make_process_job(
     session_factory: Callable[[], Session],
-    anthropic_client: anthropic.Anthropic,
     limit: int = 100,
 ) -> Callable[[], None]:
     """
-    Retorna el job de procesamiento IA: analiza artículos pendientes con Claude.
+    Retorna el job de procesamiento IA: analiza artículos pendientes.
+
+    Lee la configuración del modelo 'worker' desde la BD en cada ejecución
+    para que los cambios en la UI tomen efecto sin reiniciar el scheduler.
     """
     def _job() -> None:
         logger.info("Job process: iniciando.")
         session = session_factory()
         try:
-            result = process_pending_articles(session, anthropic_client, limit=limit)
+            cfg = get_model_config(session, "worker")
+            if cfg is None:
+                logger.warning(
+                    "No hay modelo 'worker' configurado en la BD. "
+                    "Configura uno en /web/models antes de procesar artículos."
+                )
+                return
+
+            result = process_pending_articles(
+                session,
+                model=cfg.litellm_model,
+                api_key=cfg.api_key,
+                base_url=cfg.base_url,
+                limit=limit,
+            )
             session.commit()
             logger.info("Job process: %s", result)
         except Exception as exc:
@@ -232,7 +248,6 @@ def _parse_hhmm(time_str: str) -> tuple[int, int]:
 def create_scheduler(
     daily_fetch_time: str,
     session_factory: Callable[[], Session],
-    anthropic_client: anthropic.Anthropic,
     sources_config_path: str,
 ) -> BackgroundScheduler:
     """
@@ -248,7 +263,6 @@ def create_scheduler(
     Args:
         daily_fetch_time:    "HH:MM" — hora base del ciclo diario.
         session_factory:     Callable que retorna una nueva Session.
-        anthropic_client:    Cliente Anthropic ya inicializado.
         sources_config_path: Ruta al sources.yaml.
     """
     fetch_hour, fetch_minute = _parse_hhmm(daily_fetch_time)
@@ -271,7 +285,7 @@ def create_scheduler(
         replace_existing=True,
     )
     scheduler.add_job(
-        make_process_job(session_factory, anthropic_client),
+        make_process_job(session_factory),
         trigger=CronTrigger(hour=process_hour, minute=process_minute),
         id="daily_process",
         name="Procesamiento IA de artículos",

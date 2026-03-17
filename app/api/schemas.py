@@ -85,7 +85,7 @@ class SettingsResponse(BaseModel):
     feed_description: str
     feed_base_url: str
     sources_config_path: str
-    # Nota: anthropic_api_key nunca se expone
+    # Nota: las API keys nunca se exponen
 
 
 class SchedulerUpdateRequest(BaseModel):
@@ -104,3 +104,25 @@ class SchedulerUpdateRequest(BaseModel):
         if not (0 <= h <= 23 and 0 <= m <= 59):
             raise ValueError("Hora debe ser 0-23, minuto 0-59")
         return f"{h:02d}:{m:02d}"
+
+
+# ─── AI Model Config ──────────────────────────────────────────────────────────
+
+class AIModelConfigResponse(BaseModel):
+    id: int
+    role: str
+    provider: str
+    model_id: str
+    base_url: Optional[str] = None
+    is_active: bool
+    updated_at: Optional[datetime] = None
+    # api_key nunca se expone en respuestas
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AIModelConfigRequest(BaseModel):
+    provider: str
+    model_id: str
+    api_key: Optional[str] = None   # None → sin cambios si ya existe; vacío → limpia
+    base_url: Optional[str] = None

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Daily News{% endblock %} — daily-news</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+
+  <!-- Nav -->
+  <nav class="bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-6">
+      <a href="/web/" class="font-bold text-blue-600 text-lg tracking-tight">📰 daily-news</a>
+      <a href="/web/" class="text-sm text-gray-600 hover:text-blue-600 {% if request.url.path == '/web/' %}font-semibold text-blue-600{% endif %}">Dashboard</a>
+      <a href="/web/sources" class="text-sm text-gray-600 hover:text-blue-600 {% if '/sources' in request.url.path %}font-semibold text-blue-600{% endif %}">Fuentes</a>
+      <a href="/web/models" class="text-sm text-gray-600 hover:text-blue-600 {% if '/models' in request.url.path %}font-semibold text-blue-600{% endif %}">Modelos IA</a>
+      <a href="/web/settings" class="text-sm text-gray-600 hover:text-blue-600 {% if '/settings' in request.url.path %}font-semibold text-blue-600{% endif %}">Ajustes</a>
+      <div class="ml-auto flex gap-3">
+        <a href="/docs" target="_blank" class="text-xs text-gray-400 hover:text-blue-500">API docs</a>
+        <a href="/feed.xml" target="_blank" class="text-xs text-gray-400 hover:text-blue-500">RSS feed</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+</body>
+</html>

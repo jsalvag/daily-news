@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.orm import Session
 
-from app.storage.models import Article, DailyBriefing, Source
+from app.storage.models import AIModelConfig, AppSetting, Article, DailyBriefing, Source
 from app.fetcher.rss import FetchedArticle
 
 
@@ -158,7 +158,7 @@ def get_articles_for_date(
 
     Args:
         target_date:    Fecha a consultar.
-        processed_only: Si True, solo devuelve artículos procesados por Claude.
+        processed_only: Si True, solo devuelve artículos procesados por LLM.
     """
     day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
     day_end   = datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
@@ -179,7 +179,7 @@ def get_unprocessed_articles(
     session: Session,
     limit: int = 100,
 ) -> list[Article]:
-    """Artículos que aún no fueron procesados por Claude."""
+    """Artículos que aún no fueron procesados por LLM."""
     stmt = (
         select(Article)
         .where(Article.processed.is_(False))
@@ -196,7 +196,7 @@ def update_article_ai(
     ai_summary: str,
     relevance_score: float,
 ) -> None:
-    """Guarda los resultados del procesamiento de Claude en un artículo."""
+    """Guarda los resultados del procesamiento LLM en un artículo."""
     session.execute(
         update(Article)
         .where(Article.id == article_id)
@@ -271,3 +271,74 @@ def get_recent_briefings(session: Session, limit: int = 7) -> list[DailyBriefing
         .limit(limit)
     )
     return list(session.execute(stmt).scalars().all())
+
+
+# ─── AIModelConfig ────────────────────────────────────────────────────────────
+
+def get_model_config(session: Session, role: str) -> Optional[AIModelConfig]:
+    """Retorna la configuración de modelo para un rol, o None si no existe."""
+    stmt = select(AIModelConfig).where(AIModelConfig.role == role)
+    return session.execute(stmt).scalars().first()
+
+
+def get_all_model_configs(session: Session) -> list[AIModelConfig]:
+    """Retorna todas las configuraciones de modelos."""
+    stmt = select(AIModelConfig).order_by(AIModelConfig.role)
+    return list(session.execute(stmt).scalars().all())
+
+
+def upsert_model_config(
+    session: Session,
+    role: str,
+    provider: str,
+    model_id: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> AIModelConfig:
+    """Crea o actualiza la configuración de modelo para un rol."""
+    cfg = get_model_config(session, role)
+    if cfg is None:
+        cfg = AIModelConfig(
+            role=role,
+            provider=provider,
+            model_id=model_id,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        session.add(cfg)
+    else:
+        cfg.provider   = provider
+        cfg.model_id   = model_id
+        cfg.api_key    = api_key
+        cfg.base_url   = base_url
+        cfg.updated_at = datetime.utcnow()
+    return cfg
+
+
+def delete_model_config(session: Session, role: str) -> bool:
+    """Elimina la configuración de modelo para un rol."""
+    cfg = get_model_config(session, role)
+    if cfg is None:
+        return False
+    session.delete(cfg)
+    return True
+
+
+# ─── AppSetting ───────────────────────────────────────────────────────────────
+
+def get_app_setting(session: Session, key: str, default: Optional[str] = None) -> Optional[str]:
+    """Retorna el valor de un setting por clave, o default si no existe."""
+    setting = session.get(AppSetting, key)
+    if setting is None:
+        return default
+    return setting.value
+
+
+def upsert_app_setting(session: Session, key: str, value: str) -> None:
+    """Crea o actualiza un setting de la aplicación."""
+    setting = session.get(AppSetting, key)
+    if setting is None:
+        session.add(AppSetting(key=key, value=value))
+    else:
+        setting.value      = value
+        setting.updated_at = datetime.utcnow()

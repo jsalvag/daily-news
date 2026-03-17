@@ -42,18 +42,21 @@ def session(engine):
 
 class TestInitDb:
     def test_creates_all_tables(self, engine):
-        """Las tres tablas deben existir tras init_db."""
+        """Todas las tablas deben existir tras init_db."""
         inspector = inspect(engine)
         tables = inspector.get_table_names()
         assert "sources" in tables
         assert "articles" in tables
         assert "daily_briefings" in tables
+        assert "ai_model_configs" in tables
+        assert "app_settings" in tables
 
     def test_idempotente(self, engine):
         """Llamar init_db dos veces no lanza errores."""
         init_db(engine)  # segunda vez
         inspector = inspect(engine)
-        assert len(inspector.get_table_names()) == 3
+        # sources, articles, daily_briefings, ai_model_configs, app_settings
+        assert len(inspector.get_table_names()) == 5
 
 
 # ─── Tests: Source ────────────────────────────────────────────────────────────

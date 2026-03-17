@@ -5,9 +5,10 @@ Lifespan (startup / shutdown):
   1. Carga la configuración desde .env
   2. Inicializa la base de datos (crea tablas si no existen)
   3. Sincroniza sources.yaml → BD
-  4. Crea el cliente Anthropic
+  4. Lee daily_fetch_time desde BD (sobreescribe .env si existe)
   5. Crea y arranca el BackgroundScheduler (APScheduler)
   6. Monta los endpoints MCP vía fastapi-mcp
+  7. Monta la Web UI vía Jinja2
 
 El scheduler se apaga limpiamente en el shutdown.
 """
@@ -17,14 +18,15 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-import anthropic
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.feed import feed_router
 from app.api.routes import router
 from app.config import get_settings
 from app.fetcher.sources_loader import load_and_sync
 from app.scheduler.jobs import create_scheduler
+from app.storage.crud import get_app_setting
 from app.storage.models import create_db_engine, get_session_factory, init_db
 
 logging.basicConfig(
@@ -65,16 +67,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("Error al sincronizar sources.yaml: %s", exc)
 
-    # Cliente Anthropic
-    anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    app.state.anthropic_client = anthropic_client
-    logger.info("Cliente Anthropic inicializado.")
+    # Leer daily_fetch_time desde BD (tiene prioridad sobre .env)
+    try:
+        db = session_factory()
+        saved_time = get_app_setting(db, "daily_fetch_time")
+        db.close()
+        if saved_time:
+            settings.daily_fetch_time = saved_time
+            logger.info("daily_fetch_time cargado desde BD: %s", saved_time)
+    except Exception as exc:
+        logger.warning("No se pudo leer daily_fetch_time desde BD: %s", exc)
 
     # Scheduler
     scheduler = create_scheduler(
         daily_fetch_time=settings.daily_fetch_time,
         session_factory=session_factory,
-        anthropic_client=anthropic_client,
         sources_config_path=settings.sources_config_path,
     )
     scheduler.start()
@@ -98,12 +105,20 @@ app = FastAPI(
         "API de briefings de noticias personalizados. "
         "Todos los endpoints están disponibles como herramientas MCP en /mcp."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(feed_router)   # /feed.xml (sin prefijo)
+
+
+# ─── Web UI ───────────────────────────────────────────────────────────────────
+# Se importa aquí para evitar importaciones circulares en el módulo web.
+
+from app.web.routes import web_router  # noqa: E402
+
+app.include_router(web_router)   # /web/*
 
 
 # ─── MCP ──────────────────────────────────────────────────────────────────────

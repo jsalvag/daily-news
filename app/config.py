@@ -5,9 +5,6 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
-    # Claude API
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
-
     # Servidor
     host: str = Field(default="0.0.0.0", env="HOST")
     port: int = Field(default=8000, env="PORT")
@@ -17,7 +14,7 @@ class Settings(BaseSettings):
         default="sqlite:///./data/news.db", env="DATABASE_URL"
     )
 
-    # Scheduler
+    # Scheduler (puede sobreescribirse desde la BD en startup)
     daily_fetch_time: str = Field(default="06:00", env="DAILY_FETCH_TIME")
 
     # RSS feed

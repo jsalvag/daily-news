@@ -21,8 +21,12 @@ sqlalchemy==2.0.36
 # RSS generation
 feedgen==1.0.0
 
-# Claude API
-anthropic==0.40.0
+# LLM multi-provider (Groq, Anthropic, OpenAI, Ollama, etc.)
+litellm==1.73.6
+
+# Web UI
+jinja2==3.1.4
+python-multipart==0.0.20
 
 # Utils
 python-dotenv==1.0.1
