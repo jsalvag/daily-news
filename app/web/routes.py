@@ -24,6 +24,7 @@ from app.storage.crud import (
     get_all_model_configs,
     get_all_sources,
     get_app_setting,
+    get_all_source_tags,
     get_distinct_categories,
     get_latest_briefing,
     get_model_config,
@@ -141,9 +142,15 @@ def web_sources(request: Request, db: Session = Depends(get_db)):
     """Lista y gestión de fuentes RSS."""
     sources = get_all_sources(db)
     categories = get_distinct_categories(db)
+    all_tags = get_all_source_tags(db)
     return templates.TemplateResponse(
         "sources.html",
-        {"request": request, "sources": sources, "categories": categories},
+        {
+            "request": request,
+            "sources": sources,
+            "categories": categories,
+            "all_tags": all_tags,
+        },
     )
 
 
@@ -187,8 +194,11 @@ def web_create_source(
     language: str = Form(default="es"),
     instructions: str = Form(default=""),
 ):
-    """Crea una nueva fuente desde el formulario."""
-    create_source(
+    """Crea una nueva fuente desde el formulario y extrae tags automáticamente."""
+    from app.processor.llm import extract_tags_from_instructions
+
+    tags = _extract_tags_if_possible(db, instructions)
+    src = create_source(
         db,
         name=name,
         url=url,
@@ -196,6 +206,7 @@ def web_create_source(
         source_type=source_type,
         language=language,
         instructions=instructions or None,
+        tags=tags or None,
     )
     db.commit()
     return RedirectResponse("/web/sources", status_code=303)
@@ -213,12 +224,19 @@ def web_update_source(
     instructions: str = Form(default=""),
     enabled: str = Form(default="on"),
 ):
-    """Actualiza una fuente existente desde el formulario."""
+    """Actualiza una fuente existente y re-extrae tags si cambiaron las instrucciones."""
     from app.storage.crud import get_source_by_id
 
     src = get_source_by_id(db, source_id)
     if src is None:
         raise HTTPException(status_code=404)
+
+    # Re-extraer tags solo si las instrucciones cambiaron
+    new_instructions = instructions.strip() or None
+    tags = src.tags_list  # conservar los existentes por defecto
+    if new_instructions != src.instructions:
+        tags = _extract_tags_if_possible(db, instructions) or tags
+
     update_source(
         db,
         source_id=source_id,
@@ -227,11 +245,31 @@ def web_update_source(
         category=category,
         source_type=source_type,
         language=language,
-        instructions=instructions or None,
+        instructions=new_instructions,
+        tags=tags or None,
         enabled=(enabled == "on"),
     )
     db.commit()
     return RedirectResponse("/web/sources", status_code=303)
+
+
+def _extract_tags_if_possible(db: Session, instructions: str) -> list[str]:
+    """Extrae tags usando el modelo Worker si está configurado. Falla silenciosamente."""
+    if not instructions or not instructions.strip():
+        return []
+    try:
+        from app.processor.llm import extract_tags_from_instructions
+        model_cfg = get_model_config(db, "worker")
+        if model_cfg is None:
+            return []
+        return extract_tags_from_instructions(
+            instructions,
+            model=model_cfg.litellm_model,
+            api_key=model_cfg.api_key,
+            base_url=model_cfg.base_url,
+        )
+    except Exception:
+        return []
 
 
 # ─── Modelos ─────────────────────────────────────────────────────────────────

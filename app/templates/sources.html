@@ -103,6 +103,21 @@
   }
   .last-fetch { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #cbd5e1; margin-top: 4px; }
 
+  /* ─── Tag pills (en card, pequeñas) ─────────────────────────────── */
+  .tag-pill {
+    display: inline-block; font-size: 10px; font-weight: 500;
+    padding: 1px 6px; border-radius: 100px;
+    background: #f1f5f9; color: #64748b;
+    border: 1px solid #e2e8f0; white-space: nowrap;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .tag-more {
+    display: inline-block; font-size: 9.5px; font-weight: 600;
+    padding: 1px 5px; border-radius: 100px;
+    background: #f8fafc; color: #94a3b8;
+    border: 1px dashed #e2e8f0; font-family: 'JetBrains Mono', monospace;
+  }
+
   /* ─── Card actions ───────────────────────────────── */
   .card-actions {
     display: flex; align-items: center; gap: 1px;
@@ -201,8 +216,8 @@
         <span id="stat-total">{{ sources | length }}</span> fuente{{ 's' if sources | length != 1 else '' }}
         <span class="sep">·</span>
         <span id="stat-active">{{ sources | selectattr('enabled') | list | length }}</span> activa{{ 's' if sources | selectattr('enabled') | list | length != 1 else '' }}
-        {% if categories %}
-        <span class="sep">·</span>{{ categories | length }} categoría{{ 's' if categories | length != 1 else '' }}
+        {% if all_tags %}
+        <span class="sep">·</span>{{ all_tags | length }} etiqueta{{ 's' if all_tags | length != 1 else '' }}
         {% endif %}
       </p>
     </div>
@@ -214,16 +229,17 @@
     </button>
   </div>
 
-  {# ── Category pills ── #}
-  {% if categories %}
+  {# ── Topic pills: categorías + tags en un solo filtro plano ── #}
+  {%- set all_topics = (categories + all_tags) | unique | list -%}
+  {% if all_topics %}
   <div class="flex flex-wrap gap-2 mb-4">
     <button class="cat-pill active" data-cat="" onclick="selectCat(this)">
       <span class="dot" style="background:#0f172a;"></span>
       Todas <span class="cat-count">{{ sources | length }}</span>
     </button>
-    {% for cat in categories %}
+    {% for topic in all_topics | sort %}
     {%- set cc = namespace(v='#2563eb') -%}
-    {%- set cl = cat | lower -%}
+    {%- set cl = topic | lower -%}
     {%- if 'tecnolog' in cl or 'tech' in cl -%}{%- set cc.v = '#6366f1' -%}
     {%- elif 'polít' in cl or 'polit' in cl -%}{%- set cc.v = '#ef4444' -%}
     {%- elif 'deport' in cl or 'sport' in cl -%}{%- set cc.v = '#10b981' -%}
@@ -232,9 +248,9 @@
     {%- elif 'salud' in cl or 'health' in cl -%}{%- set cc.v = '#ec4899' -%}
     {%- elif 'cultur' in cl or 'arte' in cl -%}{%- set cc.v = '#8b5cf6' -%}
     {%- endif -%}
-    <button class="cat-pill" data-cat="{{ cat }}" data-color="{{ cc.v }}" onclick="selectCat(this)">
+    <button class="cat-pill" data-cat="{{ topic }}" onclick="selectCat(this)">
       <span class="dot" style="background:{{ cc.v }};"></span>
-      {{ cat }} <span class="cat-count">{{ sources | selectattr('category', 'equalto', cat) | list | length }}</span>
+      {{ topic }}
     </button>
     {% endfor %}
   </div>
@@ -273,10 +289,11 @@
     {%- elif 'salud' in cl or 'health' in cl -%}{%- set cc.v = '#ec4899' -%}
     {%- elif 'cultur' in cl or 'arte' in cl -%}{%- set cc.v = '#8b5cf6' -%}
     {%- endif -%}
+    {%- set src_topics = ([src.category] + src.tags_list) | select | list -%}
     <div class="src-card {{ 'is-disabled' if not src.enabled }}"
          data-name="{{ src.name | lower }}"
          data-url="{{ src.url | lower }}"
-         data-category="{{ (src.category or '') | lower }}"
+         data-topics="{{ src_topics | join(',') | lower }}"
          data-enabled="{{ 'true' if src.enabled else 'false' }}"
          style="animation-delay:{{ loop.index0 * 25 }}ms">
 
@@ -296,6 +313,13 @@
         </div>
 
         <a href="{{ src.url }}" target="_blank" class="src-url" title="{{ src.url }}">{{ src.url }}</a>
+
+        {%- if src.tags_list %}
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+          {% for tag in src.tags_list[:2] %}<span class="tag-pill">{{ tag }}</span>{% endfor %}
+          {% if src.tags_list | length > 2 %}<span class="tag-more">+{{ src.tags_list | length - 2 }}</span>{% endif %}
+        </div>
+        {% endif %}
 
         {% if src.instructions %}
         <div class="src-hint">
@@ -319,6 +343,7 @@
                 data-source-type="{{ src.source_type | e }}"
                 data-language="{{ src.language | e }}"
                 data-instructions="{{ (src.instructions or '') | e }}"
+                data-tags="{{ src.tags_list | join(',') | e }}"
                 data-enabled="{{ 'true' if src.enabled else 'false' }}">
           <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
@@ -477,7 +502,12 @@
           <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#94a3b8;font-size:10px;margin-left:4px;">— lenguaje natural</span>
         </label>
         <textarea id="e-instructions" name="instructions" class="finput ftextarea"></textarea>
-        <p class="fhint">El modelo usará estas instrucciones al analizar cada artículo de esta fuente.</p>
+        <p class="fhint">Al guardar, el modelo regenerará las etiquetas automáticamente si las instrucciones cambiaron.</p>
+      </div>
+      <div id="e-tags-block" class="fgroup" style="display:none;">
+        <label class="flabel">Etiquetas actuales</label>
+        <div id="e-tags-display" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+        <p class="fhint">Generadas automáticamente. Se regeneran al cambiar las instrucciones.</p>
       </div>
       <div class="fgroup">
         <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-size:13px;color:#475569;font-family:'DM Sans',sans-serif;">
@@ -529,6 +559,24 @@
     document.getElementById('e-instructions').value  = d.instructions;
     document.getElementById('e-enabled').checked     = d.enabled === 'true';
     document.getElementById('e-source-type').value   = d.sourceType;
+
+    // Mostrar tags actuales (readonly, DOM seguro sin innerHTML)
+    const rawTags   = (d.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    const tagsBlock = document.getElementById('e-tags-block');
+    const tagsDisp  = document.getElementById('e-tags-display');
+    while (tagsDisp.firstChild) tagsDisp.removeChild(tagsDisp.firstChild);
+    if (rawTags.length) {
+      rawTags.forEach(tag => {
+        const sp = document.createElement('span');
+        sp.textContent = tag;
+        sp.style.cssText = 'display:inline-block;font-size:10px;font-weight:500;padding:2px 7px;border-radius:100px;background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;';
+        tagsDisp.appendChild(sp);
+      });
+      tagsBlock.style.display = '';
+    } else {
+      tagsBlock.style.display = 'none';
+    }
+
     openDrawer('edit');
   }
 
@@ -553,8 +601,9 @@
     let vis = 0;
 
     cards.forEach(c => {
+      const topics = (c.dataset.topics || '').split(',').map(t => t.trim()).filter(Boolean);
       const ok = (!q || c.dataset.name.includes(q) || c.dataset.url.includes(q))
-              && (!_activeCat || c.dataset.category === _activeCat.toLowerCase())
+              && (!_activeCat || topics.includes(_activeCat.toLowerCase()))
               && (showOff || c.dataset.enabled === 'true');
       c.style.display = ok ? '' : 'none';
       if (ok) vis++;

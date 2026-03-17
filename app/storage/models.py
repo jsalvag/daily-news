@@ -31,12 +31,24 @@ class Source(Base):
     language = Column(String(10), default="es")
     enabled = Column(Boolean, default=True)
     instructions = Column(Text, nullable=True)   # instrucciones LLM para esta fuente
+    tags = Column(Text, nullable=True)           # JSON list, ej: '["Argentina","Economía"]'
     created_at = Column(DateTime, default=datetime.utcnow)
     last_fetched_at = Column(DateTime, nullable=True)
 
     articles = relationship(
         "Article", back_populates="source", cascade="all, delete-orphan"
     )
+
+    @property
+    def tags_list(self) -> list[str]:
+        """Deserializa el campo tags (JSON) a lista de strings."""
+        if not self.tags:
+            return []
+        try:
+            import json
+            return json.loads(self.tags)
+        except Exception:
+            return []
 
     def __repr__(self) -> str:
         return f"<Source name={self.name!r} category={self.category!r}>"
@@ -62,8 +74,20 @@ class Article(Base):
     ai_headline = Column(String(300), nullable=True)  # titular corto
     relevance_score = Column(Float, nullable=True)    # 0.0 - 1.0
     processed = Column(Boolean, default=False)
+    tags = Column(Text, nullable=True)          # JSON list, ej: '["Argentina","Inflación"]'
 
     source = relationship("Source", back_populates="articles")
+
+    @property
+    def tags_list(self) -> list[str]:
+        """Deserializa el campo tags (JSON) a lista de strings."""
+        if not self.tags:
+            return []
+        try:
+            import json
+            return json.loads(self.tags)
+        except Exception:
+            return []
 
     def __repr__(self) -> str:
         return f"<Article title={self.title[:50]!r} source={self.source_id}>"
@@ -176,12 +200,22 @@ def init_db(engine) -> None:
                 conn.execute(text("ALTER TABLE daily_briefings_new RENAME TO daily_briefings"))
                 conn.commit()
 
-    # ── Migración: sources → agregar instructions ─────────────────────────────
+    # ── Migración: sources → agregar instructions y tags ──────────────────────
     if "sources" in existing_tables:
         source_cols = {c["name"] for c in inspector.get_columns("sources")}
-        if "instructions" not in source_cols:
-            with engine.connect() as conn:
+        with engine.connect() as conn:
+            if "instructions" not in source_cols:
                 conn.execute(text("ALTER TABLE sources ADD COLUMN instructions TEXT"))
+            if "tags" not in source_cols:
+                conn.execute(text("ALTER TABLE sources ADD COLUMN tags TEXT"))
+            conn.commit()
+
+    # ── Migración: articles → agregar tags ────────────────────────────────────
+    if "articles" in existing_tables:
+        article_cols = {c["name"] for c in inspector.get_columns("articles")}
+        if "tags" not in article_cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE articles ADD COLUMN tags TEXT"))
                 conn.commit()
 
     # Crear tablas que no existen (incluye daily_briefings si es nueva BD)
