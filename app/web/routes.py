@@ -19,19 +19,24 @@ from sqlalchemy.orm import Session
 from app.api.routes import get_db
 from app.storage.crud import (
     count_articles,
+    create_source,
     delete_model_config,
     get_all_model_configs,
     get_all_sources,
     get_app_setting,
+    get_distinct_categories,
     get_latest_briefing,
     get_model_config,
     get_pipeline_slots,
     get_recent_articles,
     get_recent_briefings,
     get_tts_config,
+    get_worker_system_prompt,
     save_pipeline_slots,
     save_tts_config,
+    save_worker_system_prompt,
     toggle_source,
+    update_source,
     upsert_app_setting,
     upsert_model_config,
 )
@@ -135,9 +140,10 @@ def web_articles(
 def web_sources(request: Request, db: Session = Depends(get_db)):
     """Lista y gestión de fuentes RSS."""
     sources = get_all_sources(db)
+    categories = get_distinct_categories(db)
     return templates.TemplateResponse(
         "sources.html",
-        {"request": request, "sources": sources},
+        {"request": request, "sources": sources, "categories": categories},
     )
 
 
@@ -171,15 +177,75 @@ def web_delete_source(
     return RedirectResponse("/web/sources", status_code=303)
 
 
+@web_router.post("/sources/create")
+def web_create_source(
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    url: str = Form(...),
+    category: str = Form(...),
+    source_type: str = Form(default="rss"),
+    language: str = Form(default="es"),
+    instructions: str = Form(default=""),
+):
+    """Crea una nueva fuente desde el formulario."""
+    create_source(
+        db,
+        name=name,
+        url=url,
+        category=category,
+        source_type=source_type,
+        language=language,
+        instructions=instructions or None,
+    )
+    db.commit()
+    return RedirectResponse("/web/sources", status_code=303)
+
+
+@web_router.post("/sources/{source_id}/update")
+def web_update_source(
+    source_id: int,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    url: str = Form(...),
+    category: str = Form(...),
+    source_type: str = Form(default="rss"),
+    language: str = Form(default="es"),
+    instructions: str = Form(default=""),
+    enabled: str = Form(default="on"),
+):
+    """Actualiza una fuente existente desde el formulario."""
+    from app.storage.crud import get_source_by_id
+
+    src = get_source_by_id(db, source_id)
+    if src is None:
+        raise HTTPException(status_code=404)
+    update_source(
+        db,
+        source_id=source_id,
+        name=name,
+        url=url,
+        category=category,
+        source_type=source_type,
+        language=language,
+        instructions=instructions or None,
+        enabled=(enabled == "on"),
+    )
+    db.commit()
+    return RedirectResponse("/web/sources", status_code=303)
+
+
 # ─── Modelos ─────────────────────────────────────────────────────────────────
 
 @web_router.get("/models", response_class=HTMLResponse)
 def web_models(request: Request, db: Session = Depends(get_db)):
-    """Configuración de modelos de IA (worker y editor)."""
+    """Configuración de modelos de IA (worker y editor) + instrucciones del worker."""
+    from app.processor.llm import DEFAULT_SYSTEM_PROMPT
+
     configs = {cfg.role: cfg for cfg in get_all_model_configs(db)}
+    worker_prompt = get_worker_system_prompt(db) or DEFAULT_SYSTEM_PROMPT
     return templates.TemplateResponse(
         "models.html",
-        {"request": request, "configs": configs},
+        {"request": request, "configs": configs, "worker_prompt": worker_prompt},
     )
 
 
@@ -238,24 +304,58 @@ def web_settings(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@web_router.post("/models/worker-prompt")
+def web_update_worker_prompt(
+    db: Session = Depends(get_db),
+    worker_prompt: str = Form(...),
+):
+    """Guarda el system prompt del modelo worker desde el formulario."""
+    save_worker_system_prompt(db, worker_prompt.strip())
+    db.commit()
+    return RedirectResponse("/web/models#worker-prompt", status_code=303)
+
+
+@web_router.get("/models/worker-prompt/reset")
+def web_reset_worker_prompt(db: Session = Depends(get_db)):
+    """Elimina el system prompt personalizado (restaura el predeterminado)."""
+    from sqlalchemy import delete as sa_delete
+    from app.storage.models import AppSetting
+
+    db.execute(sa_delete(AppSetting).where(AppSetting.key == "worker_system_prompt"))
+    db.commit()
+    return RedirectResponse("/web/models#worker-prompt", status_code=303)
+
+
 @web_router.post("/settings/tts")
 def web_update_tts(
     db: Session = Depends(get_db),
     provider: str = Form(default="disabled"),
+    gtts_lang: str = Form(default="es"),
+    gtts_tld: str = Form(default="com.mx"),
+    edge_voice: str = Form(default="es-MX-DaliaNeural"),
     openai_api_key: str = Form(default=""),
     openai_voice: str = Form(default="nova"),
     openai_model: str = Form(default="tts-1-hd"),
     elevenlabs_api_key: str = Form(default=""),
     elevenlabs_voice_id: str = Form(default=""),
+    google_api_key: str = Form(default=""),
+    google_voice: str = Form(default="es-MX-Standard-A"),
+    google_language_code: str = Form(default="es-MX"),
 ):
     """Guarda la configuración TTS desde el formulario."""
     save_tts_config(db, {
-        "tts_provider":            provider.strip(),
-        "tts_openai_api_key":      openai_api_key.strip(),
-        "tts_openai_voice":        openai_voice.strip(),
-        "tts_openai_model":        openai_model.strip(),
-        "tts_elevenlabs_api_key":  elevenlabs_api_key.strip(),
-        "tts_elevenlabs_voice_id": elevenlabs_voice_id.strip(),
+        "tts_provider":             provider.strip(),
+        "tts_gtts_lang":            gtts_lang.strip(),
+        "tts_gtts_tld":             gtts_tld.strip(),
+        "tts_edge_voice":           edge_voice.strip(),
+        "tts_openai_api_key":       openai_api_key.strip(),
+        "tts_openai_voice":         openai_voice.strip(),
+        "tts_openai_model":         openai_model.strip(),
+        "tts_elevenlabs_api_key":   elevenlabs_api_key.strip(),
+        "tts_elevenlabs_voice_id":  elevenlabs_voice_id.strip(),
+        "tts_google_api_key":       google_api_key.strip(),
+        "tts_google_voice":         google_voice.strip(),
+        "tts_google_language_code": google_language_code.strip(),
     })
     db.commit()
     return RedirectResponse("/web/settings#tts", status_code=303)

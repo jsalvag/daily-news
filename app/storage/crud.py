@@ -54,6 +54,62 @@ def get_source_by_id(session: Session, source_id: int) -> Optional[Source]:
     return session.get(Source, source_id)
 
 
+def create_source(
+    session: Session,
+    name: str,
+    url: str,
+    category: str,
+    source_type: str = "rss",
+    language: str = "es",
+    instructions: Optional[str] = None,
+    enabled: bool = True,
+) -> Source:
+    """Crea una nueva fuente y la añade a la sesión."""
+    src = Source(
+        name=name.strip(),
+        url=url.strip(),
+        category=category.strip(),
+        source_type=source_type.strip() or "rss",
+        language=language.strip() or "es",
+        instructions=instructions.strip() if instructions else None,
+        enabled=enabled,
+    )
+    session.add(src)
+    return src
+
+
+def update_source(
+    session: Session,
+    source_id: int,
+    name: str,
+    url: str,
+    category: str,
+    source_type: str = "rss",
+    language: str = "es",
+    instructions: Optional[str] = None,
+    enabled: bool = True,
+) -> Optional[Source]:
+    """Actualiza una fuente existente. Retorna None si no existe."""
+    src = session.get(Source, source_id)
+    if src is None:
+        return None
+    src.name         = name.strip()
+    src.url          = url.strip()
+    src.category     = category.strip()
+    src.source_type  = source_type.strip() or "rss"
+    src.language     = language.strip() or "es"
+    src.instructions = instructions.strip() if instructions else None
+    src.enabled      = enabled
+    return src
+
+
+def get_distinct_categories(session: Session) -> list[str]:
+    """Retorna categorías únicas de todas las fuentes, ordenadas alfabéticamente."""
+    from sqlalchemy import distinct as sa_distinct
+    stmt = select(sa_distinct(Source.category)).order_by(Source.category)
+    return [r for r in session.execute(stmt).scalars().all() if r]
+
+
 def toggle_source(session: Session, source_id: int, enabled: bool) -> bool:
     """
     Habilita o deshabilita una fuente.
@@ -361,11 +417,22 @@ def upsert_app_setting(session: Session, key: str, value: str) -> None:
 # Valores por defecto para cada clave TTS
 _TTS_DEFAULTS: dict[str, str] = {
     "tts_provider":              "disabled",
+    # edge-tts: GRATIS, sin cuenta ni API key
+    "tts_edge_voice":            "es-MX-DaliaNeural",
+    # OpenAI TTS: de pago
     "tts_openai_api_key":        "",
     "tts_openai_voice":          "nova",
     "tts_openai_model":          "tts-1-hd",
+    # ElevenLabs: requiere plan Starter
     "tts_elevenlabs_api_key":    "",
     "tts_elevenlabs_voice_id":   "",
+    # Google Cloud TTS: gratis con billing habilitado
+    "tts_google_api_key":        "",
+    "tts_google_voice":          "es-MX-Standard-A",
+    "tts_google_language_code":  "es-MX",
+    # Google Translate TTS (gTTS): 100% gratis, sin cuenta (igual que Home Assistant)
+    "tts_gtts_lang":             "es",
+    "tts_gtts_tld":              "com.mx",
 }
 
 
@@ -391,6 +458,25 @@ def save_tts_config(session: Session, config: dict[str, str]) -> None:
         value = config.get(key)
         if value is not None:
             upsert_app_setting(session, key, value)
+
+
+# ─── Worker system prompt ──────────────────────────────────────────────────────
+
+_WORKER_PROMPT_KEY = "worker_system_prompt"
+
+
+def get_worker_system_prompt(session: Session) -> str | None:
+    """
+    Lee el system prompt personalizado del modelo worker desde app_settings.
+
+    Retorna None si no hay uno guardado (el llamador usará el DEFAULT_SYSTEM_PROMPT).
+    """
+    return get_app_setting(session, _WORKER_PROMPT_KEY)
+
+
+def save_worker_system_prompt(session: Session, prompt: str) -> None:
+    """Persiste el system prompt del worker en app_settings."""
+    upsert_app_setting(session, _WORKER_PROMPT_KEY, prompt)
 
 
 def update_briefing_audio(session: Session, briefing_id: int, audio_filename: str) -> None:

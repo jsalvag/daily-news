@@ -30,6 +30,7 @@ class Source(Base):
     source_type = Column(String(20), default="rss")  # rss | web
     language = Column(String(10), default="es")
     enabled = Column(Boolean, default=True)
+    instructions = Column(Text, nullable=True)   # instrucciones LLM para esta fuente
     created_at = Column(DateTime, default=datetime.utcnow)
     last_fetched_at = Column(DateTime, nullable=True)
 
@@ -173,6 +174,14 @@ def init_db(engine) -> None:
                 # 3. Eliminar tabla vieja y renombrar la nueva
                 conn.execute(text("DROP TABLE daily_briefings"))
                 conn.execute(text("ALTER TABLE daily_briefings_new RENAME TO daily_briefings"))
+                conn.commit()
+
+    # ── Migración: sources → agregar instructions ─────────────────────────────
+    if "sources" in existing_tables:
+        source_cols = {c["name"] for c in inspector.get_columns("sources")}
+        if "instructions" not in source_cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE sources ADD COLUMN instructions TEXT"))
                 conn.commit()
 
     # Crear tablas que no existen (incluye daily_briefings si es nueva BD)
