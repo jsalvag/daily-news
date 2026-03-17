@@ -4,46 +4,56 @@
 {% block content %}
 <h1 class="text-2xl font-bold text-gray-900 mb-2">Ajustes</h1>
 <p class="text-sm text-gray-500 mb-8">
-  Configuración general de la aplicación. Los cambios de hora del scheduler se aplican
-  inmediatamente sin necesidad de reiniciar.
+  Configuración general de la aplicación. Los cambios se aplican inmediatamente sin reiniciar.
 </p>
 
-<!-- Scheduler -->
+<!-- ── Scheduler ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-  <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclo diario automático</h2>
+  <h2 class="text-base font-semibold text-gray-900 mb-1">Ciclos diarios automáticos</h2>
   <p class="text-xs text-gray-500 mb-4">
-    Hora UTC a la que se ejecuta el ciclo fetch → proceso IA → briefing.
-    El proceso IA se lanza 1 h después y el briefing 2 h después.
+    Definí cuántas veces al día se ejecuta el pipeline completo. Cada slot arranca fetch→IA→briefing.
+    El proceso IA se lanza 1 h después y el briefing 2 h después de cada slot.
   </p>
 
-  <form action="/web/settings/scheduler" method="post" class="flex items-end gap-4">
-    <div>
-      <label class="block text-xs font-medium text-gray-700 mb-1">
-        Hora del fetch diario <span class="text-red-500">*</span>
-        <span class="text-gray-400 font-normal">(UTC, formato HH:MM)</span>
-      </label>
-      <input type="text" name="daily_fetch_time" required
-             value="{{ daily_fetch_time }}"
-             placeholder="06:00"
-             pattern="^([01]?\d|2[0-3]):[0-5]\d$"
-             class="border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28" />
+  <form action="/web/settings/scheduler" method="post" id="scheduler-form">
+    <div id="slots-list" class="space-y-2 mb-4">
+      {% for slot in slots %}
+      <div class="slot-row flex items-center gap-2">
+        <input type="text" name="slots" required
+               value="{{ slot }}"
+               placeholder="06:00"
+               pattern="^([01]?\d|2[0-3]):[0-5]\d$"
+               class="border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28" />
+        <button type="button" onclick="removeSlot(this)"
+                class="remove-slot-btn text-gray-400 hover:text-red-500 text-lg leading-none px-1 transition"
+                title="Eliminar slot">×</button>
+      </div>
+      {% endfor %}
     </div>
-    <button type="submit"
-            class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
-      Guardar
-    </button>
+
+    <div class="flex items-center gap-3 mb-5">
+      <button type="button" onclick="addSlot()"
+              class="text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-300 rounded px-3 py-1.5 hover:bg-blue-50 transition">
+        ＋ Agregar slot
+      </button>
+      <button type="submit"
+              class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+        Guardar
+      </button>
+    </div>
   </form>
 
-  <!-- Timeline visual -->
-  <div class="mt-5 flex items-center gap-0 text-xs text-gray-500">
-    {% set parts = daily_fetch_time.split(':') %}
-    {% set h = parts[0] | int %}
-    {% set m = parts[1] | int %}
-    {% set proc_h = ((h * 60 + m + 60) // 60) % 24 %}
-    {% set proc_m = (h * 60 + m + 60) % 60 %}
-    {% set brief_h = ((h * 60 + m + 120) // 60) % 24 %}
-    {% set brief_m = (h * 60 + m + 120) % 60 %}
-
+  <!-- Timelines visuales (uno por slot) -->
+  {% for slot in slots %}
+  {% set parts = slot.split(':') %}
+  {% set h = parts[0] | int %}
+  {% set m = parts[1] | int %}
+  {% set proc_h = ((h * 60 + m + 60) // 60) % 24 %}
+  {% set proc_m = (h * 60 + m + 60) % 60 %}
+  {% set brief_h = ((h * 60 + m + 120) // 60) % 24 %}
+  {% set brief_m = (h * 60 + m + 120) % 60 %}
+  <div class="mt-3 flex items-center gap-0 text-xs text-gray-500 {% if not loop.first %}border-t border-gray-100 pt-3{% endif %}">
+    <span class="text-gray-400 mr-3 font-medium">Slot {{ loop.index }}:</span>
     <div class="flex flex-col items-center">
       <div class="w-3 h-3 bg-blue-500 rounded-full mb-1"></div>
       <span class="font-semibold text-blue-600">{{ "%02d:%02d" | format(h, m) }}</span>
@@ -59,12 +69,284 @@
     <div class="flex flex-col items-center">
       <div class="w-3 h-3 bg-green-500 rounded-full mb-1"></div>
       <span class="font-semibold text-green-600">{{ "%02d:%02d" | format(brief_h, brief_m) }}</span>
-      <span class="text-gray-400 mt-0.5">Briefing</span>
+      <span class="text-gray-400 mt-0.5">Briefing + Audio</span>
     </div>
   </div>
+  {% endfor %}
 </div>
 
-<!-- Feed info (read-only) -->
+<!-- ── Text-to-Speech ── -->
+<div id="tts" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <div class="flex items-start justify-between mb-1">
+    <h2 class="text-base font-semibold text-gray-900">🔊 Text-to-Speech</h2>
+    {% if tts.tts_provider == 'gtts' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">Google Translate TTS activo · gratis ★</span>
+    {% elif tts.tts_provider == 'edge' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">Edge TTS activo · gratis</span>
+    {% elif tts.tts_provider == 'openai' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">OpenAI TTS activo</span>
+    {% elif tts.tts_provider == 'elevenlabs' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">ElevenLabs activo</span>
+    {% elif tts.tts_provider == 'google' %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Google Cloud TTS activo</span>
+    {% else %}
+    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Deshabilitado</span>
+    {% endif %}
+  </div>
+  <p class="text-xs text-gray-500 mb-5">
+    Genera automáticamente un archivo MP3 al final de cada briefing diario.
+    El audio aparece como reproductor en el dashboard.
+  </p>
+
+  <form action="/web/settings/tts" method="post" id="tts-form">
+
+    <!-- Selector de proveedor (dropdown) -->
+    <div class="mb-4">
+      <label class="block text-xs font-medium text-gray-700 mb-1">Proveedor</label>
+      <select name="provider" id="tts-provider-select"
+              onchange="showTTSSection(this.value)"
+              class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 w-64">
+        <option value="disabled"   {% if tts.tts_provider == 'disabled'   %}selected{% endif %}>— Deshabilitado —</option>
+        <option value="gtts"       {% if tts.tts_provider == 'gtts'       %}selected{% endif %}>Google Translate TTS · gratis, sin cuenta ★★</option>
+        <option value="edge"       {% if tts.tts_provider == 'edge'       %}selected{% endif %}>Edge TTS (Microsoft) · gratis, sin cuenta</option>
+        <option value="openai"     {% if tts.tts_provider == 'openai'     %}selected{% endif %}>OpenAI TTS · de pago</option>
+        <option value="elevenlabs" {% if tts.tts_provider == 'elevenlabs' %}selected{% endif %}>ElevenLabs · requiere plan Starter ($)</option>
+        <option value="google"     {% if tts.tts_provider == 'google'     %}selected{% endif %}>Google Cloud TTS · gratis con billing habilitado</option>
+      </select>
+    </div>
+
+    <!-- Acordeón: Google Translate TTS (gTTS) -->
+    <div id="section-gtts"
+         class="border border-green-200 bg-green-50 rounded-lg overflow-hidden mb-3 {% if tts.tts_provider != 'gtts' %}hidden{% endif %}">
+      <div class="px-4 py-2 bg-green-100 border-b border-green-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-green-700 uppercase tracking-wide">Google Translate TTS</span>
+        <span class="text-xs text-green-700 font-medium bg-green-200 px-2 py-0.5 rounded-full">Gratis · sin cuenta · sin API key ★★</span>
+      </div>
+      <div class="p-4 space-y-3">
+        <p class="text-xs text-gray-500">
+          El mismo servicio que usa <strong>Home Assistant</strong> con su integración <em>google_translate</em>.
+          Usa la API pública de Google Translate. Sin límite de uso documentado.
+        </p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Idioma</label>
+            <select name="gtts_lang"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+              {% for code, label in [
+                ('es', 'es — Español'),
+                ('en', 'en — Inglés'),
+                ('pt', 'pt — Portugués'),
+                ('fr', 'fr — Francés'),
+              ] %}
+              <option value="{{ code }}" {% if tts.tts_gtts_lang == code %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Acento regional (TLD)</label>
+            <select name="gtts_tld"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+              {% for tld_val, label in [
+                ('com.mx', 'com.mx — México ★'),
+                ('es',     'es — España'),
+                ('com',    'com — Neutro'),
+                ('com.ar', 'com.ar — Argentina'),
+                ('us',     'us — EE.UU.'),
+              ] %}
+              <option value="{{ tld_val }}" {% if tts.tts_gtts_tld == tld_val %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400">★ recomendado · El TLD define el acento regional de la voz.</p>
+      </div>
+    </div>
+
+    <!-- Acordeón: Edge TTS -->
+    <div id="section-edge"
+         class="border border-gray-200 bg-gray-50 rounded-lg overflow-hidden mb-3 {% if tts.tts_provider != 'edge' %}hidden{% endif %}">
+      <div class="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-gray-700 uppercase tracking-wide">Edge TTS · Microsoft</span>
+        <span class="text-xs text-green-700 font-medium bg-green-100 px-2 py-0.5 rounded-full">Gratis · sin cuenta · sin API key</span>
+      </div>
+      <div class="p-4 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Voz</label>
+          <select name="edge_voice"
+                  class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-gray-500 bg-white">
+            {% for v, desc in [
+              ('es-MX-DaliaNeural',  'es-MX-DaliaNeural — femenina, México ★'),
+              ('es-MX-JorgeNeural',  'es-MX-JorgeNeural — masculina, México ★'),
+              ('es-ES-ElviraNeural', 'es-ES-ElviraNeural — femenina, España'),
+              ('es-ES-AlvaroNeural', 'es-ES-AlvaroNeural — masculina, España'),
+              ('es-AR-ElenaNeural',  'es-AR-ElenaNeural — femenina, Argentina'),
+              ('es-AR-TomasNeural',  'es-AR-TomasNeural — masculina, Argentina'),
+              ('es-CO-SalomeNeural', 'es-CO-SalomeNeural — femenina, Colombia'),
+            ] %}
+            <option value="{{ v }}" {% if tts.tts_edge_voice == v %}selected{% endif %}>{{ desc }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-gray-400 mt-1">★ recomendadas · Mismas voces neurales que usa Microsoft Edge para lectura en voz alta.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Acordeón: Google Cloud TTS -->
+    <div id="section-google"
+         class="border border-blue-200 bg-blue-50 rounded-lg overflow-hidden mb-3 {% if tts.tts_provider != 'google' %}hidden{% endif %}">
+      <div class="px-4 py-2 bg-blue-100 border-b border-blue-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-blue-700 uppercase tracking-wide">Google Cloud TTS</span>
+        <span class="text-xs text-blue-600 font-medium">gratis · 4M chars/mes (Standard)</span>
+      </div>
+      <div class="p-4 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            API Key <span class="text-red-500">*</span>
+          </label>
+          <input type="password" name="google_api_key"
+                 value="{{ tts.tts_google_api_key }}"
+                 placeholder="AIzaSy..."
+                 autocomplete="new-password"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500" />
+          <p class="text-xs text-gray-400 mt-1">
+            <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank" class="text-blue-600 hover:underline">
+              Habilitar API en Google Cloud Console →
+            </a>
+            · Crear clave en APIs &amp; Services → Credentials.
+          </p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Voz</label>
+            <select name="google_voice"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 bg-white">
+              {% for v, desc in [
+                ('es-MX-Standard-A', 'es-MX-Standard-A — femenina ★'),
+                ('es-MX-Standard-B', 'es-MX-Standard-B — masculina ★'),
+                ('es-ES-Standard-A', 'es-ES-Standard-A — femenina (España)'),
+                ('es-ES-Standard-B', 'es-ES-Standard-B — masculina (España)'),
+                ('es-MX-Wavenet-A',  'es-MX-Wavenet-A — femenina, mayor calidad'),
+                ('es-MX-Wavenet-B',  'es-MX-Wavenet-B — masculina, mayor calidad'),
+                ('es-US-Neural2-A',  'es-US-Neural2-A — femenina Neural2'),
+              ] %}
+              <option value="{{ v }}" {% if tts.tts_google_voice == v %}selected{% endif %}>{{ desc }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Idioma</label>
+            <select name="google_language_code"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 bg-white">
+              {% for code, label in [
+                ('es-MX', 'es-MX — Español México'),
+                ('es-ES', 'es-ES — Español España'),
+                ('es-US', 'es-US — Español USA'),
+              ] %}
+              <option value="{{ code }}" {% if tts.tts_google_language_code == code %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400">★ recomendadas · Standard: 4M chars/mes gratis · Wavenet/Neural2: 1M chars/mes gratis</p>
+      </div>
+    </div>
+
+    <!-- Acordeón: OpenAI -->
+    <div id="section-openai"
+         class="border border-green-200 bg-green-50 rounded-lg overflow-hidden mb-3 {% if tts.tts_provider != 'openai' %}hidden{% endif %}">
+      <div class="px-4 py-2 bg-green-100 border-b border-green-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-green-700 uppercase tracking-wide">OpenAI TTS</span>
+        <span class="text-xs text-green-600 font-medium">~$0.015–0.03 / 1K chars</span>
+      </div>
+      <div class="p-4 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            API Key <span class="text-red-500">*</span>
+          </label>
+          <input type="password" name="openai_api_key"
+                 value="{{ tts.tts_openai_api_key }}"
+                 placeholder="sk-..."
+                 autocomplete="new-password"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-green-500" />
+          <p class="text-xs text-gray-400 mt-1">
+            <a href="https://platform.openai.com/api-keys" target="_blank" class="text-green-600 hover:underline">platform.openai.com/api-keys →</a>
+          </p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Voz</label>
+            <select name="openai_voice"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+              {% for v, desc in [
+                ('nova',    'Nova — femenina, cálida ★'),
+                ('onyx',    'Onyx — masculina, profunda ★'),
+                ('alloy',   'Alloy — neutra, clara'),
+                ('echo',    'Echo — masculina, suave'),
+                ('fable',   'Fable — narrativa'),
+                ('shimmer', 'Shimmer — femenina, etérea'),
+              ] %}
+              <option value="{{ v }}" {% if tts.tts_openai_voice == v %}selected{% endif %}>{{ desc }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Modelo</label>
+            <select name="openai_model"
+                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500 bg-white">
+              <option value="tts-1-hd" {% if tts.tts_openai_model == 'tts-1-hd' %}selected{% endif %}>tts-1-hd — máxima calidad</option>
+              <option value="tts-1"    {% if tts.tts_openai_model == 'tts-1'    %}selected{% endif %}>tts-1 — rápido, menor costo</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Acordeón: ElevenLabs -->
+    <div id="section-elevenlabs"
+         class="border border-purple-200 bg-purple-50 rounded-lg overflow-hidden mb-4 {% if tts.tts_provider != 'elevenlabs' %}hidden{% endif %}">
+      <div class="px-4 py-2 bg-purple-100 border-b border-purple-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-purple-700 uppercase tracking-wide">ElevenLabs</span>
+        <span class="text-xs text-purple-600 font-medium">requiere plan Starter ($5/mes)</span>
+      </div>
+      <div class="p-4 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            API Key <span class="text-red-500">*</span>
+          </label>
+          <input type="password" name="elevenlabs_api_key"
+                 value="{{ tts.tts_elevenlabs_api_key }}"
+                 placeholder="sk_..."
+                 autocomplete="new-password"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-500" />
+          <p class="text-xs text-gray-400 mt-1">
+            <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" class="text-purple-600 hover:underline">elevenlabs.io → Settings → API Keys →</a>
+          </p>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            Voice ID <span class="text-red-500">*</span>
+          </label>
+          <input type="text" name="elevenlabs_voice_id"
+                 value="{{ tts.tts_elevenlabs_voice_id }}"
+                 placeholder="pNInz6obpgDQGcFmaJgB"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-500" />
+          <p class="text-xs text-gray-400 mt-1">
+            <a href="https://elevenlabs.io/app/voice-library" target="_blank" class="text-purple-600 hover:underline">Voice Library →</a>
+            elegí una voz en español → copiá el ID. Modelo: <strong>eleven_multilingual_v2</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit"
+            class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+      Guardar TTS
+    </button>
+
+  </form>
+</div>
+
+<!-- ── Feed RSS ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
   <h2 class="text-base font-semibold text-gray-900 mb-1">RSS feed</h2>
   <p class="text-xs text-gray-500 mb-4">
@@ -95,7 +377,7 @@
   </div>
 </div>
 
-<!-- API / MCP info -->
+<!-- ── API / MCP ── -->
 <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
   <h2 class="text-base font-semibold text-gray-900 mb-1">API &amp; MCP</h2>
   <p class="text-xs text-gray-500 mb-4">
@@ -112,4 +394,62 @@
   </div>
 </div>
 
+<script>
+function showTTSSection(provider) {
+  ["gtts", "edge", "openai", "elevenlabs", "google"].forEach(function(p) {
+    document.getElementById("section-" + p).classList.toggle("hidden", provider !== p);
+  });
+}
+
+function _makeSlotRow() {
+  var row = document.createElement("div");
+  row.className = "slot-row flex items-center gap-2";
+
+  var input = document.createElement("input");
+  input.type = "text";
+  input.name = "slots";
+  input.required = true;
+  input.placeholder = "06:00";
+  input.pattern = "^([01]?\\d|2[0-3]):[0-5]\\d$";
+  input.className = "border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-28";
+
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "remove-slot-btn text-gray-400 hover:text-red-500 text-lg leading-none px-1 transition";
+  btn.title = "Eliminar slot";
+  btn.textContent = "\u00d7";
+  btn.addEventListener("click", function() { removeSlot(btn); });
+
+  row.appendChild(input);
+  row.appendChild(btn);
+  return row;
+}
+
+function addSlot() {
+  var list = document.getElementById("slots-list");
+  var row = _makeSlotRow();
+  list.appendChild(row);
+  updateRemoveButtons();
+  row.querySelector("input").focus();
+}
+
+function removeSlot(btn) {
+  var list = document.getElementById("slots-list");
+  var rows = list.querySelectorAll(".slot-row");
+  if (rows.length <= 1) return;
+  btn.closest(".slot-row").remove();
+  updateRemoveButtons();
+}
+
+function updateRemoveButtons() {
+  var list = document.getElementById("slots-list");
+  var rows = list.querySelectorAll(".slot-row");
+  rows.forEach(function(row) {
+    var btn = row.querySelector(".remove-slot-btn");
+    if (btn) btn.disabled = rows.length <= 1;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", updateRemoveButtons);
+</script>
 {% endblock %}

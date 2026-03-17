@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Artículos{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-2">
+  <h1 class="text-2xl font-bold text-gray-900">Artículos</h1>
+  <span class="text-sm text-gray-500">{{ total }} en total</span>
+</div>
+
+<!-- Filtros -->
+<form method="get" action="/web/articles"
+      class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mb-6 flex flex-wrap gap-3 items-end">
+
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Estado IA</label>
+    <select name="processed" class="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500">
+      <option value="all"  {% if processed_filter == 'all'  %}selected{% endif %}>Todos</option>
+      <option value="yes"  {% if processed_filter == 'yes'  %}selected{% endif %}>Procesados</option>
+      <option value="no"   {% if processed_filter == 'no'   %}selected{% endif %}>Pendientes</option>
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Fuente</label>
+    <select name="source_id" class="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500">
+      <option value="">Todas las fuentes</option>
+      {% for src in sources %}
+      <option value="{{ src.id }}" {% if source_id_filter == src.id %}selected{% endif %}>
+        {{ src.name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <button type="submit"
+          class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+    Filtrar
+  </button>
+  <a href="/web/articles" class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">
+    Limpiar
+  </a>
+</form>
+
+{% if articles %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="bg-gray-50 border-b border-gray-200 text-left">
+        <th class="px-4 py-3 font-medium text-gray-600 w-8">#</th>
+        <th class="px-4 py-3 font-medium text-gray-600">Titular</th>
+        <th class="px-4 py-3 font-medium text-gray-600 hidden lg:table-cell w-32">Fuente</th>
+        <th class="px-4 py-3 font-medium text-gray-600 hidden md:table-cell w-20 text-center">Score</th>
+        <th class="px-4 py-3 font-medium text-gray-600 w-24 text-center">Estado</th>
+        <th class="px-4 py-3 font-medium text-gray-600 hidden xl:table-cell w-36">Fecha</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for art in articles %}
+      <tr class="hover:bg-gray-50 transition-colors">
+        <td class="px-4 py-3 text-gray-400 text-xs">{{ art.id }}</td>
+        <td class="px-4 py-3">
+          <a href="{{ art.url }}" target="_blank"
+             class="text-gray-900 hover:text-blue-600 font-medium leading-snug line-clamp-2">
+            {% if art.ai_headline %}
+              {{ art.ai_headline }}
+              <span class="block text-xs text-gray-400 font-normal mt-0.5">{{ art.title }}</span>
+            {% else %}
+              {{ art.title }}
+            {% endif %}
+          </a>
+          {% if art.ai_summary %}
+          <p class="text-xs text-gray-500 mt-1 line-clamp-2">{{ art.ai_summary }}</p>
+          {% elif art.summary %}
+          <p class="text-xs text-gray-400 mt-1 line-clamp-2">{{ art.summary | truncate(120) }}</p>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 hidden lg:table-cell">
+          <span class="text-xs text-gray-500">{{ source_map.get(art.source_id, '—') }}</span>
+        </td>
+        <td class="px-4 py-3 hidden md:table-cell text-center">
+          {% if art.relevance_score is not none %}
+            {% set score = (art.relevance_score * 100) | int %}
+            <span class="inline-block text-xs font-semibold px-1.5 py-0.5 rounded
+                         {% if score >= 70 %}bg-green-50 text-green-700
+                         {% elif score >= 40 %}bg-yellow-50 text-yellow-700
+                         {% else %}bg-gray-100 text-gray-500{% endif %}">
+              {{ score }}%
+            </span>
+          {% else %}
+            <span class="text-gray-300">—</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 text-center">
+          {% if art.processed %}
+            <span class="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span> IA listo
+            </span>
+          {% else %}
+            <span class="inline-flex items-center gap-1 text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 bg-orange-400 rounded-full"></span> Pendiente
+            </span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 hidden xl:table-cell text-xs text-gray-400">
+          {% if art.fetched_at %}
+            {{ art.fetched_at.strftime('%d/%m %H:%M') }}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Paginación -->
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-4 text-sm">
+  <span class="text-gray-500">
+    Página {{ page }} de {{ total_pages }} · {{ total }} artículos
+  </span>
+  <div class="flex gap-2">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}&processed={{ processed_filter }}{% if source_id_filter %}&source_id={{ source_id_filter }}{% endif %}"
+       class="px-3 py-1.5 border border-gray-300 rounded text-gray-600 hover:bg-gray-50">
+      ← Anterior
+    </a>
+    {% endif %}
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}&processed={{ processed_filter }}{% if source_id_filter %}&source_id={{ source_id_filter }}{% endif %}"
+       class="px-3 py-1.5 border border-gray-300 rounded text-gray-600 hover:bg-gray-50">
+      Siguiente →
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
+  <div class="text-4xl mb-3">📭</div>
+  <h2 class="text-lg font-semibold text-gray-700 mb-1">No hay artículos</h2>
+  <p class="text-sm text-gray-500 mb-4">
+    Usá el botón <strong>Fetch ahora</strong> en el Dashboard para descargar artículos de los feeds.
+  </p>
+  <a href="/web/"
+     class="inline-block px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+    Ir al Dashboard
+  </a>
+</div>
+{% endif %}
+
+{% endblock %}

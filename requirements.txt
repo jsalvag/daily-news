@@ -28,6 +28,11 @@ litellm==1.73.6
 jinja2==3.1.4
 python-multipart==0.0.20
 
+# TTS gratuito — voces neurales de Microsoft Edge (sin API key)
+edge-tts==7.2.7
+# TTS gratuito — Google Translate TTS (igual que Home Assistant, sin cuenta)
+gTTS==2.5.4
+
 # Utils
 python-dotenv==1.0.1
 pydantic==2.10.3

@@ -8,7 +8,7 @@ __pycache__/
 # Entorno
 .env
 
-# Base de datos
+# Base de datos y datos generados (audio, DB)
 data/
 *.db
 

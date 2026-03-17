@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,13 +18,19 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import get_db
 from app.storage.crud import (
+    count_articles,
     delete_model_config,
     get_all_model_configs,
     get_all_sources,
     get_app_setting,
     get_latest_briefing,
     get_model_config,
+    get_pipeline_slots,
+    get_recent_articles,
     get_recent_briefings,
+    get_tts_config,
+    save_pipeline_slots,
+    save_tts_config,
     toggle_source,
     upsert_app_setting,
     upsert_model_config,
@@ -42,9 +49,20 @@ def web_index(request: Request, db: Session = Depends(get_db)):
     """Dashboard: briefing más reciente + estado general."""
     briefing = get_latest_briefing(db)
     recent = get_recent_briefings(db, limit=7)
-    sources_count = len(get_all_sources(db))
+    sources = get_all_sources(db)
+    sources_count = len(sources)
     models = get_all_model_configs(db)
     worker_configured = any(m.role == "worker" for m in models)
+    pending_count = count_articles(db, processed=False)
+    processed_count = count_articles(db, processed=True)
+    total_count = pending_count + processed_count
+
+    # Últimos 6 artículos procesados para la preview del dashboard
+    recent_processed = get_recent_articles(db, limit=6, processed=True)
+    # Artículos pendientes más recientes
+    recent_pending = get_recent_articles(db, limit=4, processed=False)
+
+    source_map = {s.id: s.name for s in sources}
 
     return templates.TemplateResponse(
         "index.html",
@@ -54,6 +72,59 @@ def web_index(request: Request, db: Session = Depends(get_db)):
             "recent_briefings": recent,
             "sources_count": sources_count,
             "worker_configured": worker_configured,
+            "pending_count": pending_count,
+            "processed_count": processed_count,
+            "total_count": total_count,
+            "recent_processed": recent_processed,
+            "recent_pending": recent_pending,
+            "source_map": source_map,
+        },
+    )
+
+
+# ─── Artículos ───────────────────────────────────────────────────────────────
+
+PAGE_SIZE = 50
+
+@web_router.get("/articles", response_class=HTMLResponse)
+def web_articles(
+    request: Request,
+    db: Session = Depends(get_db),
+    page: int = 1,
+    processed: str = "all",   # "all" | "yes" | "no"
+    source_id: int = None,
+):
+    """Lista paginada de artículos con filtros."""
+    processed_flag: bool | None = None
+    if processed == "yes":
+        processed_flag = True
+    elif processed == "no":
+        processed_flag = False
+
+    offset = (page - 1) * PAGE_SIZE
+    articles = get_recent_articles(
+        db, limit=PAGE_SIZE, offset=offset,
+        processed=processed_flag, source_id=source_id,
+    )
+    total = count_articles(db, processed=processed_flag, source_id=source_id)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    sources = get_all_sources(db)
+    source_map = {s.id: s.name for s in sources}
+
+    return templates.TemplateResponse(
+        "articles.html",
+        {
+            "request": request,
+            "articles": articles,
+            "source_map": source_map,
+            "sources": sources,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "processed_filter": processed,
+            "source_id_filter": source_id,
+            "page_size": PAGE_SIZE,
         },
     )
 
@@ -149,55 +220,85 @@ def web_delete_model(role: str, db: Session = Depends(get_db)):
 
 @web_router.get("/settings", response_class=HTMLResponse)
 def web_settings(request: Request, db: Session = Depends(get_db)):
-    """Ajustes de la aplicación (hora del scheduler, etc.)."""
+    """Ajustes de la aplicación (scheduler, TTS, feed, etc.)."""
     s = request.app.state.settings
+    tts = get_tts_config(db)
+    slots = get_pipeline_slots(db)
     return templates.TemplateResponse(
         "settings.html",
         {
             "request": request,
             "daily_fetch_time": s.daily_fetch_time,
+            "slots": slots,
             "feed_title": s.feed_title,
             "feed_description": s.feed_description,
             "feed_base_url": s.feed_base_url,
+            "tts": tts,
         },
     )
+
+
+@web_router.post("/settings/tts")
+def web_update_tts(
+    db: Session = Depends(get_db),
+    provider: str = Form(default="disabled"),
+    openai_api_key: str = Form(default=""),
+    openai_voice: str = Form(default="nova"),
+    openai_model: str = Form(default="tts-1-hd"),
+    elevenlabs_api_key: str = Form(default=""),
+    elevenlabs_voice_id: str = Form(default=""),
+):
+    """Guarda la configuración TTS desde el formulario."""
+    save_tts_config(db, {
+        "tts_provider":            provider.strip(),
+        "tts_openai_api_key":      openai_api_key.strip(),
+        "tts_openai_voice":        openai_voice.strip(),
+        "tts_openai_model":        openai_model.strip(),
+        "tts_elevenlabs_api_key":  elevenlabs_api_key.strip(),
+        "tts_elevenlabs_voice_id": elevenlabs_voice_id.strip(),
+    })
+    db.commit()
+    return RedirectResponse("/web/settings#tts", status_code=303)
 
 
 @web_router.post("/settings/scheduler")
 def web_update_scheduler(
     request: Request,
     db: Session = Depends(get_db),
-    daily_fetch_time: str = Form(...),
+    slots: List[str] = Form(...),
 ):
-    """Actualiza la hora del scheduler desde la UI."""
-    from apscheduler.triggers.cron import CronTrigger
+    """Actualiza los slots del pipeline scheduler desde la UI."""
+    from app.scheduler.jobs import reschedule_all_pipeline_jobs
 
-    # Validar formato básico
-    parts = daily_fetch_time.strip().split(":")
-    if len(parts) != 2:
-        raise HTTPException(status_code=400, detail="Formato inválido (HH:MM)")
-    try:
-        fetch_h, fetch_m = int(parts[0]), int(parts[1])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Formato inválido (HH:MM)")
-    if not (0 <= fetch_h <= 23 and 0 <= fetch_m <= 59):
-        raise HTTPException(status_code=400, detail="Hora o minuto fuera de rango")
+    validated_slots: list[str] = []
+    for slot in slots:
+        parts = slot.strip().split(":")
+        if len(parts) != 2:
+            raise HTTPException(status_code=400, detail=f"Formato inválido: {slot!r} (HH:MM)")
+        try:
+            h, m = int(parts[0]), int(parts[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Formato inválido: {slot!r} (HH:MM)")
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise HTTPException(status_code=400, detail=f"Hora o minuto fuera de rango: {slot!r}")
+        validated_slots.append(f"{h:02d}:{m:02d}")
 
-    def _offset(h: int, m: int, delta: int) -> tuple[int, int]:
-        t = h * 60 + m + delta * 60
-        return (t // 60) % 24, t % 60
+    if not validated_slots:
+        raise HTTPException(status_code=400, detail="Se requiere al menos un slot")
 
-    process_h, process_m = _offset(fetch_h, fetch_m, 1)
-    briefing_h, briefing_m = _offset(fetch_h, fetch_m, 2)
+    save_pipeline_slots(db, validated_slots)
+    db.commit()
+
+    s = request.app.state.settings
+    s.daily_fetch_time = validated_slots[0]
 
     scheduler = request.app.state.scheduler
-    scheduler.reschedule_job("daily_fetch", trigger=CronTrigger(hour=fetch_h, minute=fetch_m))
-    scheduler.reschedule_job("daily_process", trigger=CronTrigger(hour=process_h, minute=process_m))
-    scheduler.reschedule_job("daily_briefing", trigger=CronTrigger(hour=briefing_h, minute=briefing_m))
-
-    time_str = f"{fetch_h:02d}:{fetch_m:02d}"
-    upsert_app_setting(db, "daily_fetch_time", time_str)
-    db.commit()
-    request.app.state.settings.daily_fetch_time = time_str
+    reschedule_all_pipeline_jobs(
+        scheduler,
+        validated_slots,
+        s.session_factory if hasattr(s, "session_factory") else request.app.state.session_factory,
+        s.sources_config_path,
+        s.audio_dir,
+    )
 
     return RedirectResponse("/web/settings", status_code=303)

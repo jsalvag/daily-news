@@ -12,6 +12,7 @@ Estrategia:
 
 from __future__ import annotations
 
+import threading
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
@@ -82,6 +83,11 @@ def api_client(db_engine):
     app.state.session_factory = SessionLocal
     app.state.scheduler = MagicMock()
     app.state.settings = mock_settings
+    app.state.job_locks = {
+        "fetch":    threading.Lock(),
+        "process":  threading.Lock(),
+        "briefing": threading.Lock(),
+    }
 
     # Sobreescribir get_db para que use el engine de test
     def override_get_db():

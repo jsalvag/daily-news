@@ -367,6 +367,7 @@ class TestGetBriefingByDate:
     def test_retorna_briefing_existente(self, session):
         session.add(DailyBriefing(
             date="2024-01-15",
+            run_at="2024-01-15 09:00",
             headlines_text="Titular 1",
             full_text="Texto completo",
             article_ids="1,2,3",
@@ -386,27 +387,38 @@ class TestUpsertBriefing:
             "Titulares del día",
             "Texto completo del briefing",
             [1, 2, 3],
+            run_at="2024-01-15 09:00",
         )
         session.commit()
 
         assert result.date == "2024-01-15"
         assert result.headlines_text == "Titulares del día"
         assert result.article_ids == "1,2,3"
+        assert result.run_at == "2024-01-15 09:00"
 
     def test_actualiza_briefing_existente(self, session):
-        upsert_briefing(session, date(2024, 1, 15), "Titulares v1", "Texto v1", [1])
+        # Mismo run_at → actualiza (1 registro)
+        upsert_briefing(session, date(2024, 1, 15), "Titulares v1", "Texto v1", [1], run_at="2024-01-15 09:00")
         session.commit()
 
-        updated = upsert_briefing(session, date(2024, 1, 15), "Titulares v2", "Texto v2", [1, 2])
+        updated = upsert_briefing(session, date(2024, 1, 15), "Titulares v2", "Texto v2", [1, 2], run_at="2024-01-15 09:00")
         session.commit()
 
         assert updated.headlines_text == "Titulares v2"
         assert updated.article_ids == "1,2"
 
-        # Solo debe existir un briefing para ese día
-        stmt = select(DailyBriefing).where(DailyBriefing.date == "2024-01-15")
+        # Solo debe existir un briefing con ese run_at
+        stmt = select(DailyBriefing).where(DailyBriefing.run_at == "2024-01-15 09:00")
         all_briefings = session.execute(stmt).scalars().all()
         assert len(all_briefings) == 1
+
+        # Diferente run_at → crea un segundo registro
+        upsert_briefing(session, date(2024, 1, 15), "Titulares v3", "Texto v3", [3], run_at="2024-01-15 12:00")
+        session.commit()
+
+        stmt2 = select(DailyBriefing).where(DailyBriefing.date == "2024-01-15")
+        all_for_date = session.execute(stmt2).scalars().all()
+        assert len(all_for_date) == 2
 
 
 class TestGetLatestBriefing:
@@ -414,11 +426,11 @@ class TestGetLatestBriefing:
         assert get_latest_briefing(session) is None
 
     def test_retorna_el_mas_reciente(self, session):
-        session.add(DailyBriefing(date="2024-01-13", headlines_text="Viejo", full_text="", article_ids=""))
-        session.add(DailyBriefing(date="2024-01-15", headlines_text="Nuevo", full_text="", article_ids=""))
-        session.add(DailyBriefing(date="2024-01-14", headlines_text="Medio", full_text="", article_ids=""))
+        session.add(DailyBriefing(date="2024-01-13", run_at="2024-01-13 00:00", headlines_text="Viejo", full_text="", article_ids=""))
+        session.add(DailyBriefing(date="2024-01-15", run_at="2024-01-15 00:00", headlines_text="Nuevo", full_text="", article_ids=""))
+        session.add(DailyBriefing(date="2024-01-14", run_at="2024-01-14 00:00", headlines_text="Medio", full_text="", article_ids=""))
         session.commit()
 
         result = get_latest_briefing(session)
         assert result is not None
-        assert result.date == "2024-01-15"
+        assert result.run_at == "2024-01-15 00:00"

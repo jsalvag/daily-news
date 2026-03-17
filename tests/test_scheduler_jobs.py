@@ -246,21 +246,46 @@ class TestMakeFetchJob:
 # ─── Tests: make_process_job ──────────────────────────────────────────────────
 
 class TestMakeProcessJob:
-    def test_job_llama_a_process_pending(self, session_factory):
+    def test_job_procesa_un_batch_hasta_vaciar_cola(self, session_factory):
+        """El job llama a process_pending_articles una vez si hay un solo batch pendiente."""
         mock_cfg = MagicMock()
         mock_cfg.litellm_model = "groq/llama3-70b-8192"
         mock_cfg.api_key = "gsk_test"
         mock_cfg.base_url = None
 
+        from app.processor.llm import ProcessResult
+
         with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
-             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg):
-            from app.processor.llm import ProcessResult
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg), \
+             patch("app.scheduler.jobs.count_articles", side_effect=[3, 0]):
+            # side_effect: primera llamada → 3 pendientes, segunda → 0 (cola vacía)
             mock_process.return_value = ProcessResult(processed=3)
 
             job = make_process_job(session_factory)
             job()
 
         mock_process.assert_called_once()
+
+    def test_job_procesa_multiples_batches(self, session_factory):
+        """Con más artículos que el batch_size, el job itera hasta vaciar la cola."""
+        mock_cfg = MagicMock()
+        mock_cfg.litellm_model = "groq/llama3-70b-8192"
+        mock_cfg.api_key = "gsk_test"
+        mock_cfg.base_url = None
+
+        from app.processor.llm import ProcessResult
+
+        with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg), \
+             patch("app.scheduler.jobs.count_articles", side_effect=[80, 30, 30, 0]), \
+             patch("app.scheduler.jobs.time.sleep"):
+            # 80 pendientes → batch 1 → 30 quedan → batch 2 → 0 quedan
+            mock_process.return_value = ProcessResult(processed=50)
+
+            job = make_process_job(session_factory, batch_size=50)
+            job()
+
+        assert mock_process.call_count == 2
 
     def test_job_no_procesa_si_no_hay_worker_configurado(self, session_factory):
         with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
@@ -270,18 +295,35 @@ class TestMakeProcessJob:
 
         mock_process.assert_not_called()
 
-    def test_job_hace_commit(self, session, session_factory):
+    def test_job_no_procesa_si_cola_vacia(self, session_factory):
+        """Si no hay artículos pendientes, process_pending_articles no se llama."""
         mock_cfg = MagicMock()
         mock_cfg.litellm_model = "groq/llama3-70b-8192"
         mock_cfg.api_key = None
         mock_cfg.base_url = None
 
         with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
-             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg):
-            from app.processor.llm import ProcessResult
-            mock_process.return_value = ProcessResult()
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg), \
+             patch("app.scheduler.jobs.count_articles", return_value=0):
+            job = make_process_job(session_factory)
+            job()
 
-            # Usamos una sesión mock para verificar el commit
+        mock_process.assert_not_called()
+
+    def test_job_hace_commit_por_batch(self, session_factory):
+        """El job hace commit después de cada batch."""
+        mock_cfg = MagicMock()
+        mock_cfg.litellm_model = "groq/llama3-70b-8192"
+        mock_cfg.api_key = None
+        mock_cfg.base_url = None
+
+        from app.processor.llm import ProcessResult
+
+        with patch("app.scheduler.jobs.process_pending_articles") as mock_process, \
+             patch("app.scheduler.jobs.get_model_config", return_value=mock_cfg), \
+             patch("app.scheduler.jobs.count_articles", side_effect=[10, 0]):
+            mock_process.return_value = ProcessResult(processed=10)
+
             mock_session = MagicMock()
             mock_session_factory = lambda: mock_session
 
@@ -321,19 +363,19 @@ class TestCreateScheduler:
         mock_factory = MagicMock()
 
         scheduler = create_scheduler(
-            daily_fetch_time="03:00",
+            slots=["03:00"],
             session_factory=mock_factory,
             sources_config_path="config/sources.yaml",
         )
 
         job_ids = {job.id for job in scheduler.get_jobs()}
-        assert "daily_fetch" in job_ids
-        assert "daily_process" in job_ids
-        assert "daily_briefing" in job_ids
+        assert "pipeline_1_fetch" in job_ids
+        assert "pipeline_1_process" in job_ids
+        assert "pipeline_1_briefing" in job_ids
 
     def test_jobs_con_horario_correcto(self):
         scheduler = create_scheduler(
-            daily_fetch_time="03:00",
+            slots=["03:00"],
             session_factory=MagicMock(),
             sources_config_path="config/sources.yaml",
         )
@@ -345,18 +387,18 @@ class TestCreateScheduler:
             fields = {f.name: f for f in job.trigger.fields}
             return int(str(fields["hour"])), int(str(fields["minute"]))
 
-        fetch_h, fetch_m       = _trigger_hhmm(jobs["daily_fetch"])
-        process_h, process_m   = _trigger_hhmm(jobs["daily_process"])
-        briefing_h, briefing_m = _trigger_hhmm(jobs["daily_briefing"])
+        fetch_h, fetch_m       = _trigger_hhmm(jobs["pipeline_1_fetch"])
+        process_h, process_m   = _trigger_hhmm(jobs["pipeline_1_process"])
+        briefing_h, briefing_m = _trigger_hhmm(jobs["pipeline_1_briefing"])
 
         assert (fetch_h, fetch_m)    == (3, 0)
         assert (process_h, process_m)  == (4, 0)
         assert (briefing_h, briefing_m) == (5, 0)
 
     def test_horario_wrap_a_medianoche(self):
-        """Si DAILY_FETCH_TIME=23:00, el proceso debe quedar en 00:00 del día siguiente."""
+        """Si el slot es 23:00, el proceso debe quedar en 00:00 del día siguiente."""
         scheduler = create_scheduler(
-            daily_fetch_time="23:00",
+            slots=["23:00"],
             session_factory=MagicMock(),
             sources_config_path="config/sources.yaml",
         )
@@ -366,9 +408,9 @@ class TestCreateScheduler:
             fields = {f.name: f for f in job.trigger.fields}
             return int(str(fields["hour"])), int(str(fields["minute"]))
 
-        _, _ = _trigger_hhmm(jobs["daily_fetch"])     # 23:00
-        ph, pm = _trigger_hhmm(jobs["daily_process"])  # 00:00
-        bh, bm = _trigger_hhmm(jobs["daily_briefing"]) # 01:00
+        _, _ = _trigger_hhmm(jobs["pipeline_1_fetch"])     # 23:00
+        ph, pm = _trigger_hhmm(jobs["pipeline_1_process"])  # 00:00
+        bh, bm = _trigger_hhmm(jobs["pipeline_1_briefing"]) # 01:00
 
         assert (ph, pm) == (0, 0)
         assert (bh, bm) == (1, 0)
@@ -376,7 +418,7 @@ class TestCreateScheduler:
     def test_lanza_error_con_tiempo_invalido(self):
         with pytest.raises(ValueError):
             create_scheduler(
-                daily_fetch_time="invalid",
+                slots=["invalid"],
                 session_factory=MagicMock(),
                 sources_config_path="config/sources.yaml",
             )

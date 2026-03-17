@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         default="config/sources.yaml", env="SOURCES_CONFIG_PATH"
     )
 
+    # Directorio para archivos de audio TTS generados
+    # Ruta absoluta para evitar ambigüedad con el directorio de trabajo
+    audio_dir: str = Field(default="/app/data/audio", env="AUDIO_DIR")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

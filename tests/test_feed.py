@@ -236,6 +236,7 @@ class TestFeedEndpoint:
         for date_str in ["2024-01-15", "2024-01-14", "2024-01-13"]:
             db_session.add(DailyBriefing(
                 date=date_str,
+                run_at=f"{date_str} 06:00",
                 headlines_text=f"Titular del {date_str}",
                 full_text=f"Detalle del {date_str}",
                 article_ids="1,2",
@@ -250,8 +251,10 @@ class TestFeedEndpoint:
 
     def test_limit_restringe_entradas(self, api_client, db_session):
         for i in range(1, 10):
+            date_str = f"2024-01-{i:02d}"
             db_session.add(DailyBriefing(
-                date=f"2024-01-{i:02d}",
+                date=date_str,
+                run_at=f"{date_str} 06:00",
                 headlines_text=f"H{i}",
                 full_text=f"F{i}",
                 article_ids="1",
@@ -266,8 +269,10 @@ class TestFeedEndpoint:
 
     def test_default_limit_es_7(self, api_client, db_session):
         for i in range(1, 11):    # 10 briefings
+            date_str = f"2024-01-{i:02d}"
             db_session.add(DailyBriefing(
-                date=f"2024-01-{i:02d}",
+                date=date_str,
+                run_at=f"{date_str} 06:00",
                 headlines_text=f"H{i}",
                 full_text=f"F{i}",
                 article_ids="1",

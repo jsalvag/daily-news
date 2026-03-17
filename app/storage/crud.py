@@ -212,9 +212,14 @@ def update_article_ai(
 # ─── DailyBriefing ────────────────────────────────────────────────────────────
 
 def get_briefing_by_date(session: Session, target_date: date) -> Optional[DailyBriefing]:
-    """Retorna el briefing diario de una fecha, o None si no existe."""
+    """Retorna el briefing más reciente de una fecha, o None si no existe."""
     date_str = target_date.strftime("%Y-%m-%d")
-    stmt = select(DailyBriefing).where(DailyBriefing.date == date_str)
+    stmt = (
+        select(DailyBriefing)
+        .where(DailyBriefing.date == date_str)
+        .order_by(DailyBriefing.run_at.desc())
+        .limit(1)
+    )
     return session.execute(stmt).scalars().first()
 
 
@@ -224,21 +229,28 @@ def upsert_briefing(
     headlines_text: str,
     full_text: str,
     article_ids: list[int],
+    run_at: str | None = None,
 ) -> DailyBriefing:
     """
-    Crea o reemplaza el briefing de una fecha.
+    Crea o actualiza el briefing de una fecha/run_at específico.
 
-    Si ya existe un briefing para esa fecha, lo actualiza.
-    Si no existe, lo crea.
+    Si run_at es None, usa el momento actual (YYYY-MM-DD HH:MM).
+    Busca un briefing existente por run_at (único por ejecución).
     """
+    if run_at is None:
+        run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     date_str = target_date.strftime("%Y-%m-%d")
     ids_str  = ",".join(str(i) for i in article_ids)
 
-    briefing = get_briefing_by_date(session, target_date)
+    # Buscar por run_at (único identificador de ejecución)
+    stmt = select(DailyBriefing).where(DailyBriefing.run_at == run_at)
+    briefing = session.execute(stmt).scalars().first()
 
     if briefing is None:
         briefing = DailyBriefing(
             date=date_str,
+            run_at=run_at,
             headlines_text=headlines_text,
             full_text=full_text,
             article_ids=ids_str,
@@ -257,7 +269,7 @@ def get_latest_briefing(session: Session) -> Optional[DailyBriefing]:
     """Retorna el briefing más reciente disponible."""
     stmt = (
         select(DailyBriefing)
-        .order_by(DailyBriefing.date.desc())
+        .order_by(DailyBriefing.run_at.desc())
         .limit(1)
     )
     return session.execute(stmt).scalars().first()
@@ -267,7 +279,7 @@ def get_recent_briefings(session: Session, limit: int = 7) -> list[DailyBriefing
     """Retorna los N briefings más recientes, del más nuevo al más antiguo."""
     stmt = (
         select(DailyBriefing)
-        .order_by(DailyBriefing.date.desc())
+        .order_by(DailyBriefing.run_at.desc())
         .limit(limit)
     )
     return list(session.execute(stmt).scalars().all())
@@ -342,3 +354,127 @@ def upsert_app_setting(session: Session, key: str, value: str) -> None:
     else:
         setting.value      = value
         setting.updated_at = datetime.utcnow()
+
+
+# ─── TTS config ───────────────────────────────────────────────────────────────
+
+# Valores por defecto para cada clave TTS
+_TTS_DEFAULTS: dict[str, str] = {
+    "tts_provider":              "disabled",
+    "tts_openai_api_key":        "",
+    "tts_openai_voice":          "nova",
+    "tts_openai_model":          "tts-1-hd",
+    "tts_elevenlabs_api_key":    "",
+    "tts_elevenlabs_voice_id":   "",
+}
+
+
+def get_tts_config(session: Session) -> dict[str, str]:
+    """
+    Lee la configuración TTS completa desde app_settings.
+
+    Retorna un dict con todas las claves TTS, usando defaults para las ausentes.
+    """
+    return {
+        key: (get_app_setting(session, key) or default)
+        for key, default in _TTS_DEFAULTS.items()
+    }
+
+
+def save_tts_config(session: Session, config: dict[str, str]) -> None:
+    """
+    Persiste las claves TTS en app_settings.
+
+    Solo guarda las claves definidas en _TTS_DEFAULTS.
+    """
+    for key in _TTS_DEFAULTS:
+        value = config.get(key)
+        if value is not None:
+            upsert_app_setting(session, key, value)
+
+
+def update_briefing_audio(session: Session, briefing_id: int, audio_filename: str) -> None:
+    """Asocia un archivo de audio a un briefing existente."""
+    session.execute(
+        update(DailyBriefing)
+        .where(DailyBriefing.id == briefing_id)
+        .values(audio_filename=audio_filename)
+    )
+
+
+def get_pipeline_slots(session: Session) -> list[str]:
+    """
+    Retorna la lista de slots HH:MM configurados para el pipeline diario.
+
+    Lee pipeline_slots desde app_settings (comma-separated).
+    Si no existe, cae a daily_fetch_time. Si tampoco, retorna ["06:00"].
+    """
+    slots_str = get_app_setting(session, "pipeline_slots")
+    if slots_str:
+        return [s.strip() for s in slots_str.split(",") if s.strip()]
+    fallback = get_app_setting(session, "daily_fetch_time")
+    if fallback:
+        return [fallback.strip()]
+    return ["06:00"]
+
+
+def save_pipeline_slots(session: Session, slots: list[str]) -> None:
+    """
+    Persiste los slots del pipeline en app_settings.
+
+    Guarda pipeline_slots (comma-joined) y actualiza daily_fetch_time
+    al primer slot para mantener compatibilidad hacia atrás.
+    """
+    slots_str = ",".join(slots)
+    upsert_app_setting(session, "pipeline_slots", slots_str)
+    if slots:
+        upsert_app_setting(session, "daily_fetch_time", slots[0])
+
+
+# ─── Article listing ──────────────────────────────────────────────────────────
+
+def get_recent_articles(
+    session: Session,
+    limit: int = 100,
+    offset: int = 0,
+    processed: Optional[bool] = None,
+    source_id: Optional[int] = None,
+) -> list[Article]:
+    """
+    Retorna artículos recientes ordenados por fecha de fetch descendente.
+
+    Args:
+        limit:     Máximo de artículos a devolver.
+        offset:    Cuántos saltar (para paginación).
+        processed: True → solo procesados, False → solo pendientes, None → todos.
+        source_id: Si se provee, filtra por fuente.
+    """
+    stmt = (
+        select(Article)
+        .order_by(Article.fetched_at.desc(), Article.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if processed is True:
+        stmt = stmt.where(Article.processed.is_(True))
+    elif processed is False:
+        stmt = stmt.where(Article.processed.is_(False))
+    if source_id is not None:
+        stmt = stmt.where(Article.source_id == source_id)
+    return list(session.execute(stmt).scalars().all())
+
+
+def count_articles(
+    session: Session,
+    processed: Optional[bool] = None,
+    source_id: Optional[int] = None,
+) -> int:
+    """Cuenta artículos con los mismos filtros que get_recent_articles."""
+    stmt = select(func.count()).select_from(Article)
+    if processed is True:
+        stmt = stmt.where(Article.processed.is_(True))
+    elif processed is False:
+        stmt = stmt.where(Article.processed.is_(False))
+    if source_id is not None:
+        stmt = stmt.where(Article.source_id == source_id)
+    return session.execute(stmt).scalar_one()

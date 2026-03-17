@@ -18,6 +18,7 @@ from datetime import date, datetime
 from typing import Generator, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
@@ -49,7 +50,9 @@ from app.storage.crud import (
     get_latest_briefing,
     get_model_config,
     get_source_by_id,
+    get_tts_config,
     toggle_source,
+    update_briefing_audio,
     upsert_app_setting,
     upsert_model_config,
 )
@@ -218,7 +221,184 @@ def get_briefing_for_date(date_str: str, db: Session = Depends(get_db)):
     return briefing
 
 
+# ─── Briefing audio ───────────────────────────────────────────────────────────
+
+@router.get(
+    "/briefings/{briefing_id}/audio-status",
+    tags=["briefings"],
+)
+def briefing_audio_status(briefing_id: int, db: Session = Depends(get_db)):
+    """Devuelve si el briefing ya tiene audio generado."""
+    from app.storage.models import DailyBriefing
+
+    briefing = db.get(DailyBriefing, briefing_id)
+    if briefing is None:
+        raise HTTPException(status_code=404, detail="Briefing no encontrado.")
+    return {"briefing_id": briefing_id, "audio_filename": briefing.audio_filename}
+
+
+@router.post(
+    "/briefings/{briefing_id}/audio",
+    tags=["briefings"],
+    status_code=202,
+)
+def generate_briefing_audio(
+    briefing_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Genera el audio TTS para un briefing existente.
+
+    - Requiere TTS configurado en settings (proveedor ≠ disabled y API key presente).
+    - Responde 202 inmediatamente; el audio se genera en background.
+    - Cuando termina, actualiza `audio_filename` en el briefing.
+    """
+    from pathlib import Path
+    from sqlalchemy.orm import Session as _Session
+
+    # Verificar que el briefing existe
+    from app.storage.models import DailyBriefing
+
+    briefing = db.get(DailyBriefing, briefing_id)
+    if briefing is None:
+        raise HTTPException(status_code=404, detail="Briefing no encontrado.")
+
+    # Verificar config TTS
+    tts_cfg = get_tts_config(db)
+    provider = tts_cfg.get("tts_provider", "disabled")
+    if provider not in ("gtts", "edge", "openai", "elevenlabs", "google"):
+        raise HTTPException(
+            status_code=422,
+            detail="TTS no configurado. Activa un proveedor en Ajustes → TTS.",
+        )
+    # gtts y edge-tts no requieren API key
+    _api_key_map = {
+        "gtts":       None,
+        "edge":       None,
+        "openai":     "tts_openai_api_key",
+        "elevenlabs": "tts_elevenlabs_api_key",
+        "google":     "tts_google_api_key",
+    }
+    key_field = _api_key_map[provider]
+    api_key = tts_cfg.get(key_field, "") if key_field else ""
+    if key_field and not api_key:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Falta la API key para {provider}. Configúrala en Ajustes → TTS.",
+        )
+
+    audio_dir = request.app.state.settings.audio_dir
+    session_factory = request.app.state.session_factory
+
+    # Snapshot de los datos necesarios (no pasar objetos ORM al thread)
+    headlines = briefing.headlines_text or ""
+    run_at_slug = briefing.run_at.replace(" ", "-").replace(":", "")
+    filename = f"briefing-{run_at_slug}.mp3"
+    _voice_key_map = {
+        "gtts":       None,
+        "edge":       "tts_edge_voice",
+        "openai":     "tts_openai_voice",
+        "elevenlabs": "tts_elevenlabs_voice_id",
+        "google":     "tts_google_voice",
+    }
+    voice = tts_cfg.get(_voice_key_map[provider], "") if _voice_key_map[provider] else ""
+    openai_model = tts_cfg.get("tts_openai_model", "tts-1-hd")
+    google_language_code = tts_cfg.get("tts_google_language_code", "es-MX")
+    gtts_lang = tts_cfg.get("tts_gtts_lang", "es")
+    gtts_tld = tts_cfg.get("tts_gtts_tld", "com.mx")
+
+    def _generate():
+        from app.tts.generate import generate_audio_for_briefing
+
+        try:
+            output_path = Path(audio_dir) / filename
+            kwargs: dict = {}
+            if provider == "openai":
+                kwargs["openai_model"] = openai_model
+            elif provider == "google":
+                kwargs["google_language_code"] = google_language_code
+            elif provider == "gtts":
+                kwargs["gtts_lang"] = gtts_lang
+                kwargs["gtts_tld"] = gtts_tld
+
+            generate_audio_for_briefing(
+                text=headlines,
+                output_path=output_path,
+                provider=provider,
+                api_key=api_key,
+                voice=voice,
+                **kwargs,
+            )
+
+            session: _Session = session_factory()
+            try:
+                update_briefing_audio(session, briefing_id, filename)
+                session.commit()
+            finally:
+                session.close()
+
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "Error generando audio para briefing %d: %s", briefing_id, exc
+            )
+
+    background_tasks.add_task(_generate)
+    return {"status": "started", "filename": filename, "message": "Generando audio en background."}
+
+
 # ─── Jobs ─────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/jobs/events",
+    tags=["jobs"],
+    include_in_schema=False,
+)
+async def job_events():
+    """
+    SSE stream de eventos del pipeline en tiempo real.
+
+    Emite eventos con `event: <tipo>` y `data: <json>`.
+    Tipos: job_start, fetch_progress, process_progress, job_done, job_error.
+    """
+    from app.events import event_stream
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+
+def _locked_job(name: str, job_fn, request: Request, background_tasks: BackgroundTasks):
+    """
+    Envuelve un job con un lock de exclusión mutua.
+
+    Si el job ya está corriendo retorna 409 Conflict.
+    Libera el lock automáticamente al terminar (éxito o error).
+    """
+    lock = request.app.state.job_locks[name]
+    if not lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail=f"El job '{name}' ya está en ejecución. Esperá a que termine.",
+        )
+
+    def _run():
+        try:
+            job_fn()
+        finally:
+            lock.release()
+
+    background_tasks.add_task(_run)
+
 
 @router.post(
     "/jobs/fetch",
@@ -230,14 +410,13 @@ def trigger_fetch(request: Request, background_tasks: BackgroundTasks):
     """
     Dispara manualmente el fetch de todos los feeds RSS.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay un fetch en curso.
     """
     session_factory = request.app.state.session_factory
     sources_config_path = request.app.state.settings.sources_config_path
     job = make_fetch_job(session_factory, sources_config_path)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Fetch iniciado en background."
-    )
+    _locked_job("fetch", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Fetch iniciado en background.")
 
 
 @router.post(
@@ -250,13 +429,12 @@ def trigger_process(request: Request, background_tasks: BackgroundTasks):
     """
     Dispara manualmente el procesamiento IA de artículos pendientes.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay un proceso en curso.
     """
     session_factory = request.app.state.session_factory
     job = make_process_job(session_factory)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Procesamiento IA iniciado en background."
-    )
+    _locked_job("process", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Procesamiento IA iniciado en background.")
 
 
 @router.post(
@@ -269,13 +447,12 @@ def trigger_briefing(request: Request, background_tasks: BackgroundTasks):
     """
     Genera (o regenera) el briefing del día actual.
     Responde 202 inmediatamente; el trabajo corre en background.
+    Retorna 409 si ya hay una generación en curso.
     """
     session_factory = request.app.state.session_factory
     job = make_briefing_job(session_factory)
-    background_tasks.add_task(job)
-    return JobStatusResponse(
-        status="started", message="Generación de briefing iniciada en background."
-    )
+    _locked_job("briefing", job, request, background_tasks)
+    return JobStatusResponse(status="started", message="Generación de briefing iniciada en background.")
 
 
 # ─── Settings ─────────────────────────────────────────────────────────────────

@@ -7,8 +7,9 @@ Lifespan (startup / shutdown):
   3. Sincroniza sources.yaml → BD
   4. Lee daily_fetch_time desde BD (sobreescribe .env si existe)
   5. Crea y arranca el BackgroundScheduler (APScheduler)
-  6. Monta los endpoints MCP vía fastapi-mcp
-  7. Monta la Web UI vía Jinja2
+  6. Crea el directorio de audio TTS si no existe
+  7. Monta los endpoints MCP vía fastapi-mcp
+  8. Monta la Web UI vía Jinja2
 
 El scheduler se apaga limpiamente en el shutdown.
 """
@@ -16,9 +17,12 @@ El scheduler se apaga limpiamente en el shutdown.
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.feed import feed_router
@@ -26,7 +30,7 @@ from app.api.routes import router
 from app.config import get_settings
 from app.fetcher.sources_loader import load_and_sync
 from app.scheduler.jobs import create_scheduler
-from app.storage.crud import get_app_setting
+from app.storage.crud import get_app_setting, get_pipeline_slots
 from app.storage.models import create_db_engine, get_session_factory, init_db
 
 logging.basicConfig(
@@ -78,15 +82,38 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("No se pudo leer daily_fetch_time desde BD: %s", exc)
 
+    # Leer pipeline_slots desde BD; si no existe, usar daily_fetch_time como slot único
+    try:
+        db = session_factory()
+        slots = get_pipeline_slots(db)
+        db.close()
+        logger.info("Pipeline slots cargados desde BD: %s", slots)
+    except Exception as exc:
+        logger.warning("No se pudo leer pipeline_slots desde BD: %s", exc)
+        slots = [settings.daily_fetch_time]
+
     # Scheduler
     scheduler = create_scheduler(
-        daily_fetch_time=settings.daily_fetch_time,
+        slots=slots,
         session_factory=session_factory,
         sources_config_path=settings.sources_config_path,
+        audio_dir=settings.audio_dir,
     )
     scheduler.start()
     app.state.scheduler = scheduler
-    logger.info("Scheduler iniciado. Fetch diario a las %s UTC.", settings.daily_fetch_time)
+    logger.info("Scheduler iniciado. Slots: %s UTC.", ", ".join(slots))
+
+    # Locks por job — evitan ejecuciones concurrentes disparadas desde la UI o API
+    app.state.job_locks = {
+        "fetch":    threading.Lock(),
+        "process":  threading.Lock(),
+        "briefing": threading.Lock(),
+    }
+
+    # Directorio de audio TTS
+    audio_dir = Path(settings.audio_dir)
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Directorio de audio TTS: %s", audio_dir.resolve())
 
     logger.info("daily-news iniciado y listo.")
     yield
@@ -105,12 +132,25 @@ app = FastAPI(
         "API de briefings de noticias personalizados. "
         "Todos los endpoints están disponibles como herramientas MCP en /mcp."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(feed_router)   # /feed.xml (sin prefijo)
+
+
+# ─── Audio TTS ────────────────────────────────────────────────────────────────
+# Endpoint dedicado para servir archivos MP3 generados por TTS.
+# El directorio se crea en lifespan antes de que llegue el primer request.
+
+@app.get("/audio/{filename}", include_in_schema=False)
+def serve_audio(filename: str, request: Request):
+    """Sirve archivos de audio MP3 generados por TTS."""
+    audio_path = Path(request.app.state.settings.audio_dir) / filename
+    if not audio_path.exists() or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio no encontrado")
+    return FileResponse(audio_path, media_type="audio/mpeg")
 
 
 # ─── Web UI ───────────────────────────────────────────────────────────────────
@@ -119,6 +159,13 @@ app.include_router(feed_router)   # /feed.xml (sin prefijo)
 from app.web.routes import web_router  # noqa: E402
 
 app.include_router(web_router)   # /web/*
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    """Redirige la raíz al dashboard de la Web UI."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/web/", status_code=302)
 
 
 # ─── MCP ──────────────────────────────────────────────────────────────────────
