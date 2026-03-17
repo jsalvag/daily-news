@@ -62,9 +62,11 @@ def create_source(
     source_type: str = "rss",
     language: str = "es",
     instructions: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     enabled: bool = True,
 ) -> Source:
     """Crea una nueva fuente y la añade a la sesión."""
+    import json
     src = Source(
         name=name.strip(),
         url=url.strip(),
@@ -72,6 +74,7 @@ def create_source(
         source_type=source_type.strip() or "rss",
         language=language.strip() or "es",
         instructions=instructions.strip() if instructions else None,
+        tags=json.dumps(tags, ensure_ascii=False) if tags else None,
         enabled=enabled,
     )
     session.add(src)
@@ -87,9 +90,11 @@ def update_source(
     source_type: str = "rss",
     language: str = "es",
     instructions: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     enabled: bool = True,
 ) -> Optional[Source]:
     """Actualiza una fuente existente. Retorna None si no existe."""
+    import json
     src = session.get(Source, source_id)
     if src is None:
         return None
@@ -99,6 +104,7 @@ def update_source(
     src.source_type  = source_type.strip() or "rss"
     src.language     = language.strip() or "es"
     src.instructions = instructions.strip() if instructions else None
+    src.tags         = json.dumps(tags, ensure_ascii=False) if tags else None
     src.enabled      = enabled
     return src
 
@@ -108,6 +114,16 @@ def get_distinct_categories(session: Session) -> list[str]:
     from sqlalchemy import distinct as sa_distinct
     stmt = select(sa_distinct(Source.category)).order_by(Source.category)
     return [r for r in session.execute(stmt).scalars().all() if r]
+
+
+def get_all_source_tags(session: Session) -> list[str]:
+    """Retorna todas las tags únicas de todas las fuentes, ordenadas alfabéticamente."""
+    tag_set: set[str] = set()
+    for src in get_all_sources(session):
+        for tag in src.tags_list:
+            if tag:
+                tag_set.add(tag)
+    return sorted(tag_set)
 
 
 def toggle_source(session: Session, source_id: int, enabled: bool) -> bool:
@@ -251,18 +267,19 @@ def update_article_ai(
     ai_headline: str,
     ai_summary: str,
     relevance_score: float,
+    tags: Optional[list[str]] = None,
 ) -> None:
     """Guarda los resultados del procesamiento LLM en un artículo."""
-    session.execute(
-        update(Article)
-        .where(Article.id == article_id)
-        .values(
-            ai_headline=ai_headline,
-            ai_summary=ai_summary,
-            relevance_score=relevance_score,
-            processed=True,
-        )
+    import json
+    values: dict = dict(
+        ai_headline=ai_headline,
+        ai_summary=ai_summary,
+        relevance_score=relevance_score,
+        processed=True,
     )
+    if tags is not None:
+        values["tags"] = json.dumps(tags, ensure_ascii=False) if tags else None
+    session.execute(update(Article).where(Article.id == article_id).values(**values))
 
 
 # ─── DailyBriefing ────────────────────────────────────────────────────────────
