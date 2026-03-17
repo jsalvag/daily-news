@@ -86,4 +86,32 @@
   </form>
 </div>
 {% endfor %}
+
+<!-- ── Instrucciones del Worker ── -->
+<div id="worker-prompt" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+  <div class="flex items-start justify-between mb-1 gap-4">
+    <h2 class="text-base font-semibold text-gray-900">🗒 Instrucciones del modelo Worker</h2>
+    <a href="/web/models/worker-prompt/reset"
+       onclick="return confirm('¿Restaurar las instrucciones originales?')"
+       class="text-xs text-gray-400 hover:text-red-500 transition flex-shrink-0 mt-0.5">
+      Restaurar predeterminado
+    </a>
+  </div>
+  <p class="text-xs text-gray-500 mb-4">
+    Instrucciones que recibe el modelo al analizar cada artículo.
+    Definen el idioma de salida, el formato del titular y del resumen, y las reglas de escritura para TTS.
+    Los cambios se aplican al próximo ciclo; los artículos ya procesados no se ven afectados.
+  </p>
+  <form action="/web/models/worker-prompt" method="post">
+    <div class="mb-3">
+      <textarea name="worker_prompt" rows="20" spellcheck="false"
+                class="w-full border border-gray-300 rounded px-3 py-2 text-xs font-mono leading-relaxed focus:outline-none focus:border-blue-500 resize-y"
+      >{{ worker_prompt }}</textarea>
+    </div>
+    <button type="submit"
+            class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition">
+      Guardar instrucciones
+    </button>
+  </form>
+</div>
 {% endblock %}

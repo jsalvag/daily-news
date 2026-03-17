@@ -66,6 +66,11 @@ REGLAS ABSOLUTAS — sin excepciones, sin importar el idioma del artículo origi
 
 7. RESUMEN — Una o dos oraciones cortas, cada una con punto final.
 
+8. ETIQUETAS — 2 a 5 palabras clave temáticas en español, Title Case.
+   Deben reflejar el tema del artículo: lugares, personas relevantes, áreas temáticas.
+   MAL: ["Noticias", "Hoy", "Artículo"]
+   BIEN: ["Argentina", "Economía", "Inflación", "Banco Central"]
+
 Antes de escribir el JSON, verificá mentalmente:
 - ¿Está todo en español? ✓
 - ¿Hay algún dígito? → convertir a palabras
@@ -73,7 +78,7 @@ Antes de escribir el JSON, verificá mentalmente:
 - ¿El titular tiene más de quince palabras? → recortar
 
 Responde SOLO en JSON válido con esta estructura exacta:
-{"headline": "...", "summary": "...", "relevance_score": 0.0}"""
+{"headline": "...", "summary": "...", "relevance_score": 0.0, "tags": ["Tag1", "Tag2"]}"""
 
 
 # ─── Modelos de datos ────────────────────────────────────────────────────────
@@ -82,6 +87,14 @@ class ArticleAnalysis(BaseModel):
     headline: str = Field(description="Titular corto en español (máx 15 palabras)")
     summary: str = Field(description="Resumen de 1-2 oraciones en español")
     relevance_score: float = Field(ge=0.0, le=1.0, description="Relevancia de 0.0 a 1.0")
+    tags: list[str] = Field(
+        default_factory=list,
+        description="2-5 etiquetas temáticas en español, Title Case (ej: ['Argentina', 'Economía', 'Inflación'])",
+    )
+
+
+class TagsExtraction(BaseModel):
+    tags: list[str] = Field(description="3-7 etiquetas clave en español, Title Case")
 
 
 @dataclass
@@ -113,6 +126,58 @@ def _build_user_message(article) -> str:
 
 
 # ─── Funciones públicas ──────────────────────────────────────────────────────
+
+def extract_tags_from_instructions(
+    instructions: str,
+    model: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> list[str]:
+    """
+    Extrae etiquetas temáticas de las instrucciones de una fuente usando LiteLLM.
+
+    Se llama una sola vez al crear/editar una fuente — no tiene impacto en el
+    throughput de artículos. Usa un prompt minimalista para ser lo más rápido posible.
+
+    Returns:
+        Lista de tags en Title Case, vacía si hay error o no hay instrucciones.
+    """
+    if not instructions or not instructions.strip():
+        return []
+
+    kwargs: dict = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Extrae entre 3 y 7 etiquetas clave de las instrucciones de una fuente de noticias. "
+                    "Las etiquetas deben ser sustantivos en español, Title Case. "
+                    'Responde SOLO en JSON: {"tags": ["Tag1", "Tag2", ...]}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Instrucciones: {instructions.strip()}",
+            },
+        ],
+        "response_format": TagsExtraction,
+    }
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    try:
+        response = litellm.completion(**kwargs)
+        raw = response.choices[0].message.content
+        if raw:
+            result = TagsExtraction.model_validate_json(raw)
+            return [t.strip().title() for t in result.tags if t.strip()][:7]
+    except Exception as exc:
+        logger.warning("Error al extraer tags de instrucciones con modelo %s: %s", model, exc)
+    return []
+
 
 def analyze_article(
     article,
@@ -225,6 +290,7 @@ def process_pending_articles(
                 ai_headline=analysis.headline,
                 ai_summary=analysis.summary,
                 relevance_score=analysis.relevance_score,
+                tags=analysis.tags or [],
             )
             result.processed += 1
         else:
@@ -235,6 +301,7 @@ def process_pending_articles(
                 ai_headline=article.title or "",
                 ai_summary=article.summary or "",
                 relevance_score=0.0,
+                tags=[],
             )
             result.skipped += 1
 
